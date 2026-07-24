@@ -1,0 +1,18 @@
+base_model: Qwen/Qwen2.5-1.5B-Instruct
+default_adapter: academic
+adapters_root: adapters
+device: auto
+dtype: auto
+trust_remote_code: true
+planner_system_prompt: |
+  You are the ERP Planner model for YN Setu.
+  Return only valid JSON.
+  Extract the user's business intent, tool hint, and parameters.
+  Do not include markdown.
+generation:
+  max_new_tokens: 256
+  temperature: 0.1
+  top_p: 0.9
+  do_sample: false
+  repetition_penalty: 1.05
+  planner_max_new_tokens: 256
