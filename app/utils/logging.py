@@ -1,4 +1,4 @@
-"""Structured logging configuration."""
+﻿"""Structured logging configuration."""
 
 from __future__ import annotations
 
@@ -8,8 +8,15 @@ from logging.config import dictConfig
 from app.config.settings import Settings
 
 
+LOG_FORMAT = (
+    '%(asctime)s | %(levelname)-8s | %(logger_name)s | '
+    'req=%(request_id)s | corr=%(correlation_id)s | conv=%(conversation_id)s | %(message)s'
+)
+
+
 class RequestContextFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
+        record.logger_name = record.name.replace('app.', '')
         try:
             from app.middleware.request_context import correlation_id_var, conversation_id_var, request_id_var
 
@@ -31,7 +38,8 @@ def configure_logging(settings: Settings) -> None:
             'filters': {'request_context': {'()': RequestContextFilter}},
             'formatters': {
                 'default': {
-                    'format': '%(asctime)s %(levelname)s %(name)s request_id=%(request_id)s correlation_id=%(correlation_id)s conversation_id=%(conversation_id)s %(message)s'
+                    'format': LOG_FORMAT,
+                    'datefmt': '%Y-%m-%d %H:%M:%S',
                 }
             },
             'handlers': {
