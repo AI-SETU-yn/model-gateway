@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
     configure_logging(settings)
     app.state.is_ready = False
     model_loader = get_model_loader()
-    await model_loader.initialize(preload_default_adapter=settings.preload_default_adapter)
+    await model_loader.initialize(preload_default_adapter=bool(config.default_adapter))
     app.state.is_ready = settings.ready_on_startup or model_loader.base_model_loaded
     yield
     app.state.is_ready = False

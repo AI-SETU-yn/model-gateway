@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 
+from app.config.settings import get_model_config
 from app.schemas.health import AdapterInventoryResponse, HealthResponse, MetricsResponse, ReloadAdapterResponse
 from app.schemas.inference import ReloadAdapterRequest
 from app.services.dependencies import get_adapter_manager, get_metrics_service, get_model_loader
@@ -11,10 +12,11 @@ router = APIRouter(tags=['management'])
 
 @router.get('/health', response_model=HealthResponse)
 async def health(model_loader: ModelLoader = Depends(get_model_loader)) -> HealthResponse:
+    config = get_model_config()
     return HealthResponse(
         status='ok' if model_loader.base_model_loaded else 'starting',
         baseModelLoaded=model_loader.base_model_loaded,
-        defaultAdapter=model_loader.active_adapter or '',
+        defaultAdapter=config.default_adapter,
         loadedAdapters=model_loader.loaded_adapters,
         device=model_loader.resolved_device,
         dtype=model_loader.resolved_dtype,
