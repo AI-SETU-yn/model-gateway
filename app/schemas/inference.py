@@ -44,7 +44,14 @@ class PlannerResponse(BaseModel):
 
     intent: str | None = None
     tool: str | None = None
+    domain: str | None = None
+    service: str | None = None
+    entity: str | None = None
+    operation: str | None = None
     parameters: dict[str, object] = Field(default_factory=dict)
+    requires_tool: bool | None = Field(default=None, alias='requiresTool')
+    response_type: str | None = Field(default=None, alias='responseType')
+    confidence: float | None = None
     raw_response: str = Field(alias='rawResponse')
     adapter: str
     model: str
