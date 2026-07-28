@@ -33,6 +33,22 @@ class GenerationConfig(BaseModel):
     use_chat_template: bool = True
 
 
+class PlannerTargetConfig(BaseModel):
+    """Declarative planner target used by fallback planning."""
+
+    model_config = ConfigDict(extra='forbid', frozen=True)
+
+    domain: str | None = None
+    service: str | None = None
+    entity: str
+    operation: str
+    intent: str | None = None
+    tool: str | None = None
+    description: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+    response_type: str | None = None
+
+
 class ModelGatewayConfig(BaseModel):
     """YAML-backed gateway configuration."""
 
@@ -47,6 +63,7 @@ class ModelGatewayConfig(BaseModel):
     planner_system_prompt: str
     generate_system_prompt: str = DEFAULT_GENERATE_SYSTEM_PROMPT
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
+    planner_targets: list[PlannerTargetConfig] = Field(default_factory=list)
 
     @classmethod
     def from_yaml(cls, path: Path) -> 'ModelGatewayConfig':

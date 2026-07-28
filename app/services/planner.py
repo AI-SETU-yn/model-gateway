@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from app.config.settings import ModelGatewayConfig
@@ -25,8 +26,15 @@ class PlannerService:
 
     async def plan(self, request: PlannerRequest) -> PlannerResponse:
         prompt = self._build_prompt(request.query)
-        raw_response, _ = await self._inference_service.planner_generate(request.adapter, prompt)
-        parsed = self._parse_json(raw_response)
+        try:
+            raw_response, _ = await self._inference_service.planner_generate(request.adapter, prompt)
+            parsed = self._parse_json(raw_response)
+        except Exception as exc:
+            logger.exception(
+                'planner_model_failed_using_fallback',
+                extra={'adapter': request.adapter, 'query': request.query, 'error_type': type(exc).__name__},
+            )
+            return self._fallback_plan(request, raw_response=f'fallback:{type(exc).__name__}')
 
         domain = self._get_text(parsed, 'domain')
         entity = self._get_text(parsed, 'entity')
@@ -54,6 +62,99 @@ class PlannerService:
             adapter=request.adapter,
             model=self._config.base_model,
         )
+
+    def _fallback_plan(self, request: PlannerRequest, *, raw_response: str) -> PlannerResponse:
+        target = self._select_fallback_target(request.query, request.adapter)
+        if target is None:
+            return PlannerResponse(
+                intent='general.chat',
+                tool=None,
+                domain=None,
+                service=None,
+                entity=None,
+                operation=None,
+                parameters={},
+                requiresTool=False,
+                responseType='text',
+                confidence=0.0,
+                rawResponse=raw_response,
+                adapter=request.adapter,
+                model=self._config.base_model,
+            )
+
+        service = target.service or request.adapter
+        intent = target.intent or self._compose_intent(service, target.entity, target.operation)
+        return PlannerResponse(
+            intent=intent,
+            tool=target.tool,
+            domain=target.domain,
+            service=service,
+            entity=target.entity,
+            operation=target.operation,
+            parameters={},
+            requiresTool=True,
+            responseType=target.response_type,
+            confidence=0.0,
+            rawResponse=raw_response,
+            adapter=request.adapter,
+            model=self._config.base_model,
+        )
+
+    def _select_fallback_target(self, query: str, adapter: str):
+        query_tokens = self._tokens(query)
+        if not query_tokens:
+            return None
+
+        scored = []
+        for target in self._config.planner_targets:
+            if target.service and target.service != adapter:
+                continue
+            score = self._score_fallback_target(target, query, query_tokens)
+            if score > 0:
+                scored.append((score, target))
+
+        if not scored:
+            return None
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        best_score = scored[0][0]
+        best = [target for score, target in scored if score == best_score]
+        return best[0] if len(best) == 1 else None
+
+    @classmethod
+    def _score_fallback_target(cls, target, query: str, query_tokens: list[str]) -> float:
+        query_token_set = set(query_tokens)
+        normalized_query = ' '.join(query_tokens)
+        entity_tokens = cls._tokens(target.entity)
+        target_tokens = cls._tokens(
+            ' '.join(
+                item
+                for item in (
+                    target.intent,
+                    target.tool,
+                    target.entity,
+                    target.operation,
+                    target.description,
+                    ' '.join(target.keywords),
+                )
+                if item
+            )
+        )
+
+        score = 0.0
+        if entity_tokens:
+            overlap = len(set(entity_tokens) & query_token_set)
+            score += (overlap / len(set(entity_tokens))) * 50
+            positions = [query_tokens.index(token) for token in entity_tokens if token in query_token_set]
+            if positions:
+                score += 30 / (min(positions) + 1)
+
+        score += len(set(target_tokens) & query_token_set)
+        for keyword in target.keywords:
+            keyword_tokens = cls._tokens(keyword)
+            if keyword_tokens and ' '.join(keyword_tokens) in normalized_query:
+                score += 15
+        return score
 
     def _build_prompt(self, query: str) -> str:
         return (
@@ -154,3 +255,13 @@ class PlannerService:
         if len(parts) < 3:
             return None
         return '.'.join(parts)
+
+    @staticmethod
+    def _tokens(value: str) -> list[str]:
+        normalized = re.sub(r'[^a-zA-Z0-9]+', ' ', value).lower()
+        tokens: list[str] = []
+        for token in normalized.split():
+            if token in {'a', 'an', 'and', 'are', 'for', 'give', 'me', 'my', 'of', 'show', 'the', 'to'}:
+                continue
+            tokens.append(token[:-1] if token.endswith('s') and len(token) > 3 else token)
+        return tokens

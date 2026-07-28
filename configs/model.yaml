@@ -24,3 +24,28 @@ generation:
   repetition_penalty: 1.05
   planner_max_new_tokens: 128
   use_chat_template: true
+planner_targets:
+  - domain: vidhya
+    service: academic
+    entity: academic_year
+    operation: list
+    intent: academic.academic_year.list
+    tool: academic.get_all_academic_years_by_branch_id
+    description: Fetches all academic years for a branch.
+    keywords:
+      - academic year
+      - academic years
+      - current academic year
+    response_type: structured
+  - domain: vidhya
+    service: academic
+    entity: holiday
+    operation: list
+    intent: academic.holiday.list
+    tool: academic.get_all_holi_days
+    description: Fetches holidays for an academic year.
+    keywords:
+      - holiday
+      - holidays
+      - holiday calendar
+    response_type: structured
