@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
-    logger.warning('app_exception', extra={'code': exc.code, 'message': exc.message, 'path': request.url.path})
+    logger.warning('app_exception', extra={'code': exc.code, 'error_message': exc.message, 'path': request.url.path})
     body = ErrorResponse(
         code=exc.code,
         message=exc.message,
