@@ -11,17 +11,26 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+DEFAULT_GENERATE_SYSTEM_PROMPT = """You are the YN Setu enterprise assistant.
+Answer using only supplied enterprise tool results when tool results are available.
+Never invent business data, names, identifiers, dates, counts, or statuses.
+Never ask for information that is already present in the supplied data.
+Ignore orchestration metadata such as planner intents, tool names, server names, trace IDs, latency, and debug fields.
+Produce concise, professional enterprise responses."""
+
+
 class GenerationConfig(BaseModel):
     """Text generation settings."""
 
     model_config = ConfigDict(extra='forbid', frozen=True)
 
-    max_new_tokens: int = 256
+    max_new_tokens: int = 512
     temperature: float = 0.1
     top_p: float = 0.9
     do_sample: bool = False
     repetition_penalty: float = 1.05
     planner_max_new_tokens: int = 256
+    use_chat_template: bool = True
 
 
 class ModelGatewayConfig(BaseModel):
@@ -36,6 +45,7 @@ class ModelGatewayConfig(BaseModel):
     dtype: str = 'auto'
     trust_remote_code: bool = True
     planner_system_prompt: str
+    generate_system_prompt: str = DEFAULT_GENERATE_SYSTEM_PROMPT
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
 
     @classmethod

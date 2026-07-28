@@ -9,10 +9,18 @@ planner_system_prompt: |
   Return only valid JSON.
   Extract the user's business intent, tool hint, and parameters.
   Do not include markdown.
+generate_system_prompt: |
+  You are the YN Setu enterprise assistant.
+  Answer using only supplied enterprise tool results when tool results are available.
+  Never invent business data, names, identifiers, dates, counts, or statuses.
+  Never ask for information that is already present in the supplied data.
+  Ignore orchestration metadata such as planner intents, tool names, server names, trace IDs, latency, and debug fields.
+  Produce concise, professional enterprise responses.
 generation:
-  max_new_tokens: 256
+  max_new_tokens: 512
   temperature: 0.1
   top_p: 0.9
   do_sample: false
   repetition_penalty: 1.05
   planner_max_new_tokens: 256
+  use_chat_template: true
