@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.config.settings import ModelGatewayConfig
 from app.exceptions.errors import PlannerResponseError
 from app.schemas.inference import PlannerRequest, PlannerResponse
-from app.services.inference import InferenceService
+
+if TYPE_CHECKING:
+    from app.services.inference import InferenceService
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +19,7 @@ logger = logging.getLogger(__name__)
 class PlannerService:
     """Generate planner JSON using the inference model."""
 
-    def __init__(self, config: ModelGatewayConfig, inference_service: InferenceService) -> None:
+    def __init__(self, config: ModelGatewayConfig, inference_service: 'InferenceService') -> None:
         self._config = config
         self._inference_service = inference_service
 
@@ -27,9 +29,9 @@ class PlannerService:
         parsed = self._parse_json(raw_response)
 
         domain = self._get_text(parsed, 'domain')
-        service = self._get_text(parsed, 'service')
         entity = self._get_text(parsed, 'entity')
         operation = self._get_text(parsed, 'operation')
+        service = self._get_text(parsed, 'service') or self._derive_service(request.adapter, entity, operation)
         intent = self._get_text(parsed, 'intent') or self._compose_intent(service, entity, operation)
         tool = self._get_text(parsed, 'tool')
         parameters = self._normalize_parameters(parsed.get('parameters'))
@@ -68,14 +70,14 @@ class PlannerService:
     @staticmethod
     def _parse_json(raw_response: str) -> dict[str, object]:
         candidate = raw_response.strip()
+        decoder = json.JSONDecoder()
         try:
-            parsed = json.loads(candidate)
+            parsed, _ = decoder.raw_decode(candidate)
         except json.JSONDecodeError:
             start = candidate.find('{')
-            end = candidate.rfind('}')
-            if start != -1 and end != -1 and end > start:
+            if start != -1:
                 try:
-                    parsed = json.loads(candidate[start:end + 1])
+                    parsed, _ = decoder.raw_decode(candidate[start:])
                 except json.JSONDecodeError as exc:
                     raise PlannerResponseError('Planner model did not return valid JSON.') from exc
             else:
@@ -138,6 +140,13 @@ class PlannerService:
             cleaned_list = [item for item in (cls._prune_nulls(item) for item in value) if item is not None]
             return cleaned_list or None
         return value
+
+    @staticmethod
+    def _derive_service(adapter: str, entity: str | None, operation: str | None) -> str | None:
+        if entity and operation:
+            normalized = adapter.strip()
+            return normalized or None
+        return None
 
     @staticmethod
     def _compose_intent(service: str | None, entity: str | None, operation: str | None) -> str | None:

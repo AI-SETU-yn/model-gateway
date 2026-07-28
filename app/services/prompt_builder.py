@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,6 +16,14 @@ class PromptBundle:
 
     messages: list[dict[str, str]]
     source: str
+    preprocessing_ms: float
+    building_ms: float
+
+
+@dataclass(frozen=True)
+class LegacyPromptParts:
+    user_message: str
+    tool_result: Any | None
 
 
 class PromptBuilder:
@@ -32,31 +41,60 @@ class PromptBuilder:
             'tool_execution_latency_ms',
         }
     )
+    _TOOL_RESULT_MARKER = 'Tool execution result:'
+    _USER_MESSAGE_MARKER = 'User message:'
 
     def __init__(self, default_system_prompt: str) -> None:
         self._default_system_prompt = default_system_prompt.strip()
 
     def build(self, request: GenerateRequest) -> PromptBundle:
+        preprocessing_started = time.perf_counter()
+        tool_result = request.tool_result
         if request.messages:
             messages = self._normalize_messages(request.messages)
             source = 'structured_messages'
         else:
-            messages = [{'role': 'user', 'content': request.prompt or ''}]
+            legacy_parts = self._extract_legacy_prompt_parts(request.prompt or '')
+            if legacy_parts is None:
+                messages = [{'role': 'user', 'content': request.prompt or ''}]
+            else:
+                messages = [{'role': 'user', 'content': legacy_parts.user_message}]
+                if tool_result is None:
+                    tool_result = legacy_parts.tool_result
+            source = 'legacy_prompt'
+
+        preprocessing_ms = (time.perf_counter() - preprocessing_started) * 1000
+        building_started = time.perf_counter()
+        if tool_result is not None and source == 'legacy_prompt':
+            source = 'legacy_prompt+extracted_tool_result'
+
+        if tool_result is not None and source == 'structured_messages':
+            source = 'structured_messages+tool_result'
+
+        if request.messages and tool_result is None:
+            source = 'structured_messages'
+
+        if not request.messages and tool_result is None:
             source = 'legacy_prompt'
 
         system_prompt = self._build_system_prompt(request.generation_policy, request.response_type)
         messages = self._ensure_system_message(messages, system_prompt)
 
-        if request.tool_result is not None:
+        if tool_result is not None:
             messages.append(
                 {
                     'role': 'tool',
-                    'content': self._serialize_tool_result(request.tool_result),
+                    'content': self._serialize_tool_result(tool_result),
                 }
             )
-            source = f'{source}+tool_result'
 
-        return PromptBundle(messages=messages, source=source)
+        building_ms = (time.perf_counter() - building_started) * 1000
+        return PromptBundle(
+            messages=messages,
+            source=source,
+            preprocessing_ms=round(preprocessing_ms, 2),
+            building_ms=round(building_ms, 2),
+        )
 
     def _build_system_prompt(self, policy: GenerationPolicy | None, response_type: str | None) -> str:
         extras: list[str] = []
@@ -96,6 +134,35 @@ class PromptBuilder:
             first['content'] = f"{system_prompt}\n\n{first['content']}".strip()
             return [first, *messages[1:]]
         return [{'role': 'system', 'content': system_prompt}, *messages]
+
+    @classmethod
+    def _extract_legacy_prompt_parts(cls, prompt: str) -> LegacyPromptParts | None:
+        tool_marker_index = prompt.find(cls._TOOL_RESULT_MARKER)
+        user_marker_index = prompt.find(cls._USER_MESSAGE_MARKER)
+        if tool_marker_index == -1 or user_marker_index == -1 or user_marker_index <= tool_marker_index:
+            return None
+
+        tool_text_start = tool_marker_index + len(cls._TOOL_RESULT_MARKER)
+        tool_text = prompt[tool_text_start:user_marker_index].strip()
+        user_message = prompt[user_marker_index + len(cls._USER_MESSAGE_MARKER):].strip()
+        if not user_message:
+            user_message = prompt.strip()
+
+        tool_result = cls._parse_json_prefix(tool_text)
+        if tool_result is None:
+            return LegacyPromptParts(user_message=user_message, tool_result=None)
+        return LegacyPromptParts(user_message=user_message, tool_result=tool_result)
+
+    @staticmethod
+    def _parse_json_prefix(value: str) -> Any | None:
+        candidate = value.strip()
+        if not candidate:
+            return None
+        try:
+            parsed, _ = json.JSONDecoder().raw_decode(candidate)
+            return parsed
+        except json.JSONDecodeError:
+            return None
 
     @classmethod
     def _serialize_tool_result(cls, tool_result: Any) -> str:

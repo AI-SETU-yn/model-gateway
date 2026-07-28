@@ -24,12 +24,12 @@ class GenerationConfig(BaseModel):
 
     model_config = ConfigDict(extra='forbid', frozen=True)
 
-    max_new_tokens: int = 512
+    max_new_tokens: int = 128
     temperature: float = 0.1
     top_p: float = 0.9
     do_sample: bool = False
     repetition_penalty: float = 1.05
-    planner_max_new_tokens: int = 256
+    planner_max_new_tokens: int = 128
     use_chat_template: bool = True
 
 

@@ -1,7 +1,9 @@
 import pytest
 
+from app.config.settings import GenerationConfig
 from app.schemas.inference import GenerateRequest
 from app.services.chat_template import ChatTemplateHandler
+from app.services.generation_parameters import GenerationParameters
 from app.services.prompt_builder import PromptBuilder
 
 
@@ -105,6 +107,71 @@ def test_prompt_builder_strips_runtime_transport_wrapper_when_tool_result_contai
     assert '"server"' not in bundle.messages[-1]['content']
     assert '"tool_execution_latency_ms"' not in bundle.messages[-1]['content']
     assert '"academicYear": "2025-2026"' in bundle.messages[-1]['content']
+
+
+def test_prompt_builder_extracts_business_data_from_legacy_runtime_prompt() -> None:
+    legacy_prompt = (
+        'You are the Yn AI Setu assistant.\n'
+        'Planner intent: academic.academic_year.list\n'
+        'Requires tool: True\n'
+        'Tool execution result: '
+        '{"tool_name":"academic.get_all_academic_years_by_branch_id","server":"vidhya-mcp",'
+        '"status":"success","success":true,"response_type":"structured",'
+        '"data":{"content":[{"type":"text","text":"{\\"data\\":[{\\"academicYear\\":\\"2025-2026\\"}]}"}]},'
+        '"registry_lookup_latency_ms":1.2,"tool_execution_latency_ms":44.5}\n\n'
+        'User message:\n'
+        'List all academic years'
+    )
+    request = GenerateRequest.model_validate({'adapter': 'academic', 'prompt': legacy_prompt})
+
+    bundle = PromptBuilder(DEFAULT_SYSTEM_PROMPT).build(request)
+
+    assert bundle.source == 'legacy_prompt+extracted_tool_result'
+    assert [message['role'] for message in bundle.messages] == ['system', 'user', 'tool']
+    assert bundle.messages[1]['content'] == 'List all academic years'
+    assert 'academic.academic_year.list' not in bundle.messages[1]['content']
+    assert '"tool_name"' not in bundle.messages[-1]['content']
+    assert '"server"' not in bundle.messages[-1]['content']
+    assert '"registry_lookup_latency_ms"' not in bundle.messages[-1]['content']
+    assert '"academicYear": "2025-2026"' in bundle.messages[-1]['content']
+
+
+def test_generation_parameters_omit_sampling_kwargs_when_sampling_disabled() -> None:
+    tokenizer = type('Tokenizer', (), {'pad_token_id': 0, 'eos_token_id': 1})()
+    params = GenerationParameters(
+        max_new_tokens=128,
+        temperature=0.1,
+        top_p=0.9,
+        do_sample=False,
+        repetition_penalty=1.05,
+    )
+
+    kwargs = params.to_model_kwargs(tokenizer)
+
+    assert kwargs['max_new_tokens'] == 128
+    assert kwargs['do_sample'] is False
+    assert 'temperature' not in kwargs
+    assert 'top_p' not in kwargs
+
+
+def test_generation_parameters_use_planner_specific_token_budget() -> None:
+    tokenizer = type('Tokenizer', (), {'pad_token_id': 0, 'eos_token_id': 1})()
+    config = GenerationConfig(
+        max_new_tokens=128,
+        planner_max_new_tokens=96,
+        temperature=0.1,
+        top_p=0.9,
+        do_sample=False,
+        repetition_penalty=1.05,
+    )
+
+    params = GenerationParameters.from_config(config, planner_mode=True)
+    kwargs = params.to_model_kwargs(tokenizer)
+
+    assert kwargs['max_new_tokens'] == 96
+    assert kwargs['do_sample'] is False
+    assert 'temperature' not in kwargs
+    assert 'top_p' not in kwargs
 
 
 def test_chat_template_handler_uses_tokenizer_template() -> None:

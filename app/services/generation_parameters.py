@@ -29,12 +29,14 @@ class GenerationParameters:
         )
 
     def to_model_kwargs(self, tokenizer: PreTrainedTokenizerBase) -> dict[str, Any]:
-        return {
+        kwargs: dict[str, Any] = {
             'max_new_tokens': self.max_new_tokens,
-            'temperature': self.temperature,
-            'top_p': self.top_p,
             'do_sample': self.do_sample,
             'repetition_penalty': self.repetition_penalty,
             'pad_token_id': tokenizer.pad_token_id,
             'eos_token_id': tokenizer.eos_token_id,
         }
+        if self.do_sample:
+            kwargs['temperature'] = self.temperature
+            kwargs['top_p'] = self.top_p
+        return kwargs

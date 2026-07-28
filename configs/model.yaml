@@ -17,10 +17,10 @@ generate_system_prompt: |
   Ignore orchestration metadata such as planner intents, tool names, server names, trace IDs, latency, and debug fields.
   Produce concise, professional enterprise responses.
 generation:
-  max_new_tokens: 512
+  max_new_tokens: 128
   temperature: 0.1
   top_p: 0.9
   do_sample: false
   repetition_penalty: 1.05
-  planner_max_new_tokens: 256
+  planner_max_new_tokens: 128
   use_chat_template: true
