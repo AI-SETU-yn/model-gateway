@@ -14,6 +14,7 @@ from app.services.model_loader import ModelLoader
 from app.services.planner import PlannerService
 from app.services.prompt_builder import PromptBuilder
 from app.services.response_formatter import ResponseFormatter
+from app.services.security_classifier import SecurityClassifierService
 
 
 @lru_cache(maxsize=1)
@@ -65,3 +66,8 @@ def get_inference_service() -> InferenceService:
 @lru_cache(maxsize=1)
 def get_planner_service() -> PlannerService:
     return PlannerService(get_model_config(), get_inference_service())
+
+
+@lru_cache(maxsize=1)
+def get_security_classifier_service() -> SecurityClassifierService:
+    return SecurityClassifierService(get_model_config(), get_inference_service())

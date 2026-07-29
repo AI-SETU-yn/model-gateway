@@ -62,6 +62,14 @@ class PlannerRequest(BaseModel):
     query: str
 
 
+class SecurityClassifyRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid', populate_by_name=True)
+
+    message: str
+    system_prompt: str = Field(alias='system_prompt')
+    adapter: str | None = None
+
+
 class ReloadAdapterRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
@@ -84,3 +92,12 @@ class PlannerResponse(BaseModel):
     raw_response: str = Field(alias='rawResponse')
     adapter: str
     model: str
+
+
+class SecurityClassificationResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    safe: bool
+    category: str
+    confidence: float
+    reason: str
