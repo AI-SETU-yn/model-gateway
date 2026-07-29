@@ -1,15 +1,20 @@
-"""Base model and adapter loading service."""
+﻿"""Base model and adapter loading service."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
+import peft
 import torch
+import transformers
 from peft import PeftModel
-from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerBase
+from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase
 
 from app.config.settings import ModelGatewayConfig
 from app.exceptions.errors import GPUUnavailableError, ModelLoadError
@@ -72,14 +77,39 @@ class ModelLoader:
                 }
                 if self._resolved_dtype is not None:
                     model_kwargs['torch_dtype'] = self._resolved_dtype
-                base_model = AutoModelForCausalLM.from_pretrained(self._config.base_model, **model_kwargs)
-                tokenizer = AutoTokenizer.from_pretrained(self._config.base_model, use_fast=True, trust_remote_code=self._config.trust_remote_code)
+                configured_base_model = str(self._config.base_model).strip()
+                base_model = AutoModelForCausalLM.from_pretrained(configured_base_model, **model_kwargs)
+                tokenizer = AutoTokenizer.from_pretrained(
+                    configured_base_model,
+                    use_fast=True,
+                    trust_remote_code=self._config.trust_remote_code,
+                )
+                loaded_model_name = str(getattr(base_model.config, '_name_or_path', '') or '').strip()
+                model_type = str(getattr(base_model.config, 'model_type', '') or '').strip()
+                tokenizer_name = str(getattr(tokenizer, 'name_or_path', '') or '').strip()
+                self._validate_loaded_model_identity(configured_base_model, loaded_model_name)
+                logger.info('Configured base model: %s', configured_base_model)
+                logger.info('Loaded model name (_name_or_path): %s', loaded_model_name or 'Unknown')
+                logger.info('Model class: %s', type(base_model))
+                logger.info('Model type: %s', model_type or 'Unknown')
+                logger.info('Tokenizer name: %s', tokenizer_name or 'Unknown')
+                logger.info('Working directory: %s', Path.cwd().resolve())
+                logger.info('Python executable: %s', sys.executable)
+                logger.info('Transformers version: %s', transformers.__version__)
+                logger.info('PEFT version: %s', peft.__version__)
                 if tokenizer.pad_token is None:
                     tokenizer.pad_token = tokenizer.eos_token
                 tokenizer.padding_side = 'left'
                 self._model = base_model
                 self._tokenizer = tokenizer
-                logger.info('base_model_loaded', extra={'model': self._config.base_model, 'device': self._resolved_device, 'dtype': self.resolved_dtype})
+                logger.info(
+                    'base_model_loaded',
+                    extra={
+                        'model': configured_base_model,
+                        'device': self._resolved_device,
+                        'dtype': self.resolved_dtype,
+                    },
+                )
             except Exception as exc:
                 raise ModelLoadError(f'Failed to load base model: {exc}') from exc
 
@@ -93,6 +123,7 @@ class ModelLoader:
         adapter_path = self._adapter_manager.get_adapter_path(adapter_name)
         async with self._lock:
             assert self._model is not None
+            self._validate_adapter_base_model(adapter_name, adapter_path)
             if adapter_name not in self._loaded_adapters:
                 try:
                     if isinstance(self._model, PeftModel):
@@ -100,7 +131,7 @@ class ModelLoader:
                     else:
                         self._model = PeftModel.from_pretrained(self._model, str(adapter_path), adapter_name=adapter_name, is_trainable=False)
                     self._loaded_adapters[adapter_name] = adapter_path
-                    logger.info('adapter_loaded', extra={'adapter': adapter_name, 'path': str(adapter_path)})
+                    logger.info('adapter_loaded', extra={'adapter': adapter_name, 'path': str(adapter_path.resolve())})
                 except Exception as exc:
                     raise ModelLoadError(f'Failed to load adapter "{adapter_name}": {exc}') from exc
             self._model.set_adapter(adapter_name)
@@ -111,6 +142,7 @@ class ModelLoader:
         adapter_path = self._adapter_manager.get_adapter_path(adapter_name)
         async with self._lock:
             assert self._model is not None
+            self._validate_adapter_base_model(adapter_name, adapter_path)
             if adapter_name in self._loaded_adapters:
                 try:
                     self._model.delete_adapter(adapter_name)
@@ -125,9 +157,36 @@ class ModelLoader:
                 self._model.set_adapter(adapter_name)
                 self._loaded_adapters[adapter_name] = adapter_path
                 self._active_adapter = adapter_name
-                logger.info('adapter_reloaded', extra={'adapter': adapter_name, 'path': str(adapter_path)})
+                logger.info('adapter_reloaded', extra={'adapter': adapter_name, 'path': str(adapter_path.resolve())})
             except Exception as exc:
                 raise ModelLoadError(f'Failed to reload adapter "{adapter_name}": {exc}') from exc
+
+    def _validate_adapter_base_model(self, adapter_name: str, adapter_path: Path) -> None:
+        config_path = adapter_path / 'adapter_config.json'
+        try:
+            adapter_config = json.loads(config_path.read_text(encoding='utf-8'))
+        except Exception as exc:
+            raise ModelLoadError(f'Failed to read adapter config for "{adapter_name}": {exc}') from exc
+        adapter_base_model = str(adapter_config.get('base_model_name_or_path') or '').strip()
+        configured_base_model = str(self._config.base_model).strip()
+        if adapter_base_model and adapter_base_model != configured_base_model:
+            raise ModelLoadError(
+                f'Adapter "{adapter_name}" expects base model:\n'
+                f'{adapter_base_model}\n\n'
+                f'Gateway configured:\n'
+                f'{configured_base_model}'
+            )
+
+    @staticmethod
+    def _validate_loaded_model_identity(configured_base_model: str, loaded_model_name: str) -> None:
+        if loaded_model_name and loaded_model_name != configured_base_model:
+            raise ModelLoadError(
+                f'Configured base model:\n'
+                f'{configured_base_model}\n\n'
+                f'Actually loaded:\n'
+                f'{loaded_model_name}\n\n'
+                f'Possible configuration or deployment mismatch.'
+            )
 
     @staticmethod
     def _resolve_device_map(device: str) -> str | dict[str, str] | None:
