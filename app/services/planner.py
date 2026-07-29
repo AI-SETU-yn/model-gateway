@@ -119,7 +119,7 @@ class PlannerService:
         return score
 
     def _build_prompt(self, query: str) -> str:
-        planner_prompt = self._prompt_registry.planner_prompt(self._profile)
+        planner_prompt = self._prompt_registry.get(self._profile_name, 'planner', self._profile).content
         return (
             f"{planner_prompt}\n"
             'Schema: {"domain": string|null, "service": string|null, "entity": string|null, '

@@ -18,7 +18,7 @@ class GeneralChatService:
         self._profile_name = profile_name
         self._profile = profile
         self._inference_service = inference_service
-        self._prompt_builder = PromptBuilder(prompt_registry.general_chat_prompt(profile))
+        self._prompt_builder = PromptBuilder(prompt_registry.get(profile_name, 'chat', profile).content)
 
     async def chat(self, request: GeneralChatRequest) -> GenerateResponse:
         generate_request = GenerateRequest(

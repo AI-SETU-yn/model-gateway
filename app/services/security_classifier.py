@@ -24,7 +24,7 @@ class SecurityClassifierService:
         self._profile_name = profile_name
         self._profile = profile
         self._inference_service = inference_service
-        self._security_prompt = prompt_registry.security_prompt(profile)
+        self._security_prompt = prompt_registry.get(profile_name, 'security', profile).content
         self._prompt_builder = PromptBuilder(self._security_prompt)
 
     async def classify(self, request: SecurityClassifyRequest) -> SecurityClassificationResponse:
