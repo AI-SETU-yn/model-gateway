@@ -1,7 +1,7 @@
 import app.api.routers.management as management_module
 import app.main as main_module
 from app.main import create_app
-from app.services.dependencies import get_metrics_service, get_model_loader
+from app.services.dependencies import get_erp_model_loader, get_metrics_service
 from fastapi.testclient import TestClient
 
 
@@ -21,6 +21,15 @@ class StubModelLoader:
     async def reload_adapter(self, adapter_name: str) -> None:
         if adapter_name not in self.loaded_adapters:
             self.loaded_adapters.append(adapter_name)
+
+
+class StubGeneralModelLoader:
+    def __init__(self) -> None:
+        self.base_model_loaded = True
+        self.initialize_calls = 0
+
+    async def initialize(self, preload_default_adapter: bool = False) -> None:
+        self.initialize_calls += 1
 
 
 class StubMetricsService:
@@ -47,10 +56,11 @@ class StubMetricsService:
 
 
 def _build_client(stub_loader: StubModelLoader) -> TestClient:
-    main_module.get_model_loader = lambda: stub_loader
-    management_module.get_model_config = lambda: type('Config', (), {'default_adapter': 'academic'})()
+    main_module.get_erp_model_loader = lambda: stub_loader
+    main_module.get_general_model_loader = lambda: StubGeneralModelLoader()
+    management_module.get_model_config = lambda: type('Config', (), {'routing': type('Routing', (), {'planner_model': 'erp'})(), 'get_profile': lambda self, _: type('Profile', (), {'default_adapter': 'academic'})()})()
     app = create_app()
-    app.dependency_overrides[get_model_loader] = lambda: stub_loader
+    app.dependency_overrides[get_erp_model_loader] = lambda: stub_loader
     app.dependency_overrides[get_metrics_service] = lambda: StubMetricsService()
     return TestClient(app)
 

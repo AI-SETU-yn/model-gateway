@@ -12,14 +12,6 @@ class HealthResponse(BaseModel):
     dtype: str
 
 
-class ReloadAdapterResponse(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-
-    adapter: str
-    reloaded: bool
-    loaded_adapters: list[str] = Field(alias='loadedAdapters')
-
-
 class MetricsResponse(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
@@ -34,9 +26,3 @@ class MetricsResponse(BaseModel):
     last_generation_time_ms: float = Field(alias='lastGenerationTimeMs')
     gpu_memory_allocated_mb: float = Field(alias='gpuMemoryAllocatedMb')
     process_memory_rss_mb: float = Field(alias='processMemoryRssMb')
-
-
-class AdapterInventoryResponse(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-
-    adapters: list[str]

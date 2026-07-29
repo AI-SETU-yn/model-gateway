@@ -20,40 +20,49 @@ class FailingInferenceService:
 
 
 def _build_service(raw_response: str) -> PlannerService:
-    return PlannerService(_build_config(), StubInferenceService(raw_response))
+    return PlannerService(_build_config().get_profile('erp'), StubInferenceService(raw_response))
 
 
 def _build_config() -> ModelGatewayConfig:
     return ModelGatewayConfig(
-        base_model='Qwen/Qwen2.5-1.5B-Instruct',
-        default_adapter='academic',
-        adapters_root='adapters',
-        planner_system_prompt='You are the ERP Planner model for YN Setu.',
-        generation=GenerationConfig(),
-        planner_targets=[
-            {
-                'domain': 'vidhya',
-                'service': 'academic',
-                'entity': 'academic_year',
-                'operation': 'list',
-                'intent': 'academic.academic_year.list',
-                'tool': 'academic.get_all_academic_years_by_branch_id',
-                'description': 'Fetches all academic years for a branch.',
-                'keywords': ['academic year', 'academic years', 'current academic year'],
-                'response_type': 'structured',
+        models={
+            'erp': {
+                'base_model': 'Qwen/Qwen2.5-1.5B-Instruct',
+                'adapter_enabled': True,
+                'default_adapter': 'academic',
+                'adapters_root': 'adapters',
+                'prompts': {'planner_system_prompt': 'You are the ERP Planner model for YN Setu.'},
+                'generation': GenerationConfig().model_dump(),
+                'planner_targets': [
+                    {
+                        'domain': 'vidhya',
+                        'service': 'academic',
+                        'entity': 'academic_year',
+                        'operation': 'list',
+                        'intent': 'academic.academic_year.list',
+                        'tool': 'academic.get_all_academic_years_by_branch_id',
+                        'description': 'Fetches all academic years for a branch.',
+                        'keywords': ['academic year', 'academic years', 'current academic year'],
+                        'response_type': 'structured',
+                    },
+                    {
+                        'domain': 'vidhya',
+                        'service': 'academic',
+                        'entity': 'holiday',
+                        'operation': 'list',
+                        'intent': 'academic.holiday.list',
+                        'tool': 'academic.get_all_holi_days',
+                        'description': 'Fetches holidays for an academic year.',
+                        'keywords': ['holiday', 'holidays', 'holiday calendar'],
+                        'response_type': 'structured',
+                    },
+                ],
             },
-            {
-                'domain': 'vidhya',
-                'service': 'academic',
-                'entity': 'holiday',
-                'operation': 'list',
-                'intent': 'academic.holiday.list',
-                'tool': 'academic.get_all_holi_days',
-                'description': 'Fetches holidays for an academic year.',
-                'keywords': ['holiday', 'holidays', 'holiday calendar'],
-                'response_type': 'structured',
+            'general': {
+                'base_model': 'Qwen/Qwen2.5-1.5B-Instruct',
+                'adapter_enabled': False,
             },
-        ],
+        }
     )
 
 
@@ -156,7 +165,7 @@ def test_planner_service_ignores_malformed_trailing_conversational_output() -> N
 
 
 def test_planner_service_falls_back_when_inference_raises() -> None:
-    service = PlannerService(_build_config(), FailingInferenceService())
+    service = PlannerService(_build_config().get_profile('erp'), FailingInferenceService())
 
     response = asyncio.run(
         service.plan(type('Request', (), {'adapter': 'academic', 'query': 'Give me the holidays for the current academic year.'})())

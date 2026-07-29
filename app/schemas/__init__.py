@@ -1,19 +1,23 @@
-"""Request and response schemas for the model gateway."""
-
-from app.schemas.common import ErrorResponse
-from app.schemas.health import AdapterInventoryResponse, HealthResponse, MetricsResponse, ReloadAdapterResponse
-from app.schemas.inference import GenerateRequest, GenerateResponse, PlannerRequest, PlannerResponse, ReloadAdapterRequest, UsageResponse
+from app.schemas.inference import (
+    GeneralChatRequest,
+    GenerateRequest,
+    GenerateResponse,
+    PlannerRequest,
+    PlannerResponse,
+    ReloadAdapterRequest,
+    SecurityClassificationResponse,
+    SecurityClassifyRequest,
+    UsageResponse,
+)
 
 __all__ = [
-    'AdapterInventoryResponse',
-    'ErrorResponse',
     'GenerateRequest',
     'GenerateResponse',
-    'HealthResponse',
-    'MetricsResponse',
+    'GeneralChatRequest',
     'PlannerRequest',
     'PlannerResponse',
     'ReloadAdapterRequest',
-    'ReloadAdapterResponse',
+    'SecurityClassificationResponse',
+    'SecurityClassifyRequest',
     'UsageResponse',
 ]

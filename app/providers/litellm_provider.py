@@ -1,71 +1,54 @@
-import asyncio
-import logging
+from __future__ import annotations
 
-import litellm
+import time
+from collections.abc import AsyncIterator
 
-from app.config.settings import Settings
-from app.exceptions.errors import GatewayTimeoutError, InvalidProviderResponseError, ProviderUnavailableError
-from app.models.request import GenerateRequest
-from app.models.response import GenerateResponse, UsageResponse
-from app.providers.base_provider import BaseProvider
+from app.clients.base import BaseInferenceClient
+from app.models.inference import InferenceRequest, InferenceResponse
+from app.observability.inference import InferenceObserver, elapsed_ms_since
+from app.providers.base import BaseInferenceProvider
+from app.retry.circuit_breaker import CircuitBreaker
+from app.retry.policy import RetryExecutor
 
-logger = logging.getLogger(__name__)
 
+class LiteLLMProvider(BaseInferenceProvider):
+    def __init__(
+        self,
+        client: BaseInferenceClient,
+        retry_executor: RetryExecutor,
+        observer: InferenceObserver,
+        circuit_breaker: CircuitBreaker,
+    ) -> None:
+        self._client = client
+        self._retry_executor = retry_executor
+        self._observer = observer
+        self._circuit_breaker = circuit_breaker
 
-class LiteLLMProvider(BaseProvider):
-    def __init__(self, settings: Settings) -> None:
-        self._settings = settings
-        litellm.drop_params = True
+    async def complete(self, request: InferenceRequest) -> InferenceResponse:
+        started = time.perf_counter()
 
-    async def generate(self, request: GenerateRequest) -> GenerateResponse:
-        last_error: Exception | None = None
+        async def operation() -> InferenceResponse:
+            return await self._retry_executor.run(lambda: self._client.completion(request), should_retry=self._should_retry)
 
-        for attempt in range(self._settings.max_retries + 1):
-            try:
-                response = await litellm.acompletion(
-                    model=f"ollama/{self._settings.model_name}",
-                    api_base=self._settings.ollama_base_url,
-                    messages=[
-                        {'role': 'system', 'content': request.system_prompt},
-                        {'role': 'user', 'content': request.user_prompt},
-                    ],
-                    timeout=self._settings.request_timeout_seconds,
-                    metadata=request.metadata,
-                )
-                return self._to_response(response)
-            except TimeoutError as exc:
-                last_error = exc
-                logger.warning('litellm_timeout', extra={'attempt': attempt + 1, 'model_name': self._settings.model_name})
-            except Exception as exc:
-                last_error = exc
-                logger.warning('litellm_failure', extra={'attempt': attempt + 1, 'model_name': self._settings.model_name, 'error': str(exc)})
-
-            if attempt < self._settings.max_retries:
-                await asyncio.sleep(0.2 * (attempt + 1))
-
-        if isinstance(last_error, TimeoutError):
-            raise GatewayTimeoutError('LiteLLM request timed out.') from last_error
-        raise ProviderUnavailableError('LiteLLM or Ollama is unavailable.') from last_error
-
-    def _to_response(self, body) -> GenerateResponse:
         try:
-            message = body.choices[0].message
-            content = getattr(message, 'content', None)
-            if content is None and isinstance(message, dict):
-                content = message.get('content')
-            usage = getattr(body, 'usage', None)
-            model = str(getattr(body, 'model', None) or f"ollama/{self._settings.model_name}")
-            prompt_tokens = int(getattr(usage, 'prompt_tokens', 0) if usage is not None else 0)
-            completion_tokens = int(getattr(usage, 'completion_tokens', 0) if usage is not None else 0)
-            total_tokens = int(getattr(usage, 'total_tokens', 0) if usage is not None else 0)
-            return GenerateResponse(
-                response=str(content or ''),
-                usage=UsageResponse(
-                    promptTokens=prompt_tokens,
-                    completionTokens=completion_tokens,
-                    totalTokens=total_tokens,
-                ),
-                model=model,
-            )
+            response = await self._circuit_breaker.call(operation)
+            response = response.model_copy(update={'latencyMs': elapsed_ms_since(started)})
+            self._observer.on_success(request, response)
+            return response
         except Exception as exc:
-            raise InvalidProviderResponseError('Invalid response from LiteLLM provider.') from exc
+            self._observer.on_failure(
+                request,
+                provider=str(request.metadata.get('provider') or ''),
+                model=str(request.metadata.get('model_name') or request.model_alias),
+                latency_ms=elapsed_ms_since(started),
+                error=exc,
+            )
+            raise
+
+    async def stream(self, request: InferenceRequest) -> AsyncIterator[InferenceResponse]:
+        yield await self.complete(request.model_copy(update={'stream': True}))
+
+    @staticmethod
+    def _should_retry(exc: Exception) -> bool:
+        transient_names = {'TimeoutError', 'ConnectError', 'ReadTimeout', 'APITimeoutError', 'CircuitBreakerOpenError'}
+        return type(exc).__name__ in transient_names

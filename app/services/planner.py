@@ -5,36 +5,38 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from app.config.settings import ModelGatewayConfig
+from app.config.settings import ModelProfileConfig
 from app.exceptions.errors import PlannerResponseError
+from app.registry.prompt_registry import PromptRegistry
 from app.schemas.inference import PlannerRequest, PlannerResponse
-
-if TYPE_CHECKING:
-    from app.services.inference import InferenceService
+from app.services.inference import ERPInferenceService
 
 logger = logging.getLogger(__name__)
 
 
 class PlannerService:
-    """Generate planner JSON using the inference model."""
-
-    def __init__(self, config: ModelGatewayConfig, inference_service: 'InferenceService') -> None:
-        self._config = config
+    def __init__(
+        self,
+        profile_name: str,
+        profile: ModelProfileConfig,
+        prompt_registry: PromptRegistry,
+        inference_service: ERPInferenceService,
+    ) -> None:
+        self._profile_name = profile_name
+        self._profile = profile
+        self._prompt_registry = prompt_registry
         self._inference_service = inference_service
 
     async def plan(self, request: PlannerRequest) -> PlannerResponse:
         prompt = self._build_prompt(request.query)
         try:
-            raw_response, _ = await self._inference_service.planner_generate(request.adapter, prompt)
+            raw_response, _, model_name = await self._inference_service.planner_generate(request.adapter, prompt)
             parsed = self._parse_json(raw_response)
         except Exception as exc:
-            logger.exception(
-                'planner_model_failed_using_fallback',
-                extra={'adapter': request.adapter, 'query': request.query, 'error_type': type(exc).__name__},
-            )
-            return self._fallback_plan(request, raw_response=f'fallback:{type(exc).__name__}')
+            logger.exception('planner_model_failed_using_fallback', extra={'adapter': request.adapter, 'query': request.query})
+            return self._fallback_plan(request, raw_response=f'fallback:{type(exc).__name__}', model_name=self._profile.model_name)
 
         domain = self._get_text(parsed, 'domain')
         entity = self._get_text(parsed, 'entity')
@@ -46,7 +48,6 @@ class PlannerService:
         requires_tool = self._get_bool(parsed, 'requiresTool')
         response_type = self._get_text(parsed, 'responseType')
         confidence = self._get_float(parsed, 'confidence')
-
         return PlannerResponse(
             intent=intent,
             tool=tool,
@@ -60,62 +61,38 @@ class PlannerService:
             confidence=confidence,
             rawResponse=raw_response,
             adapter=request.adapter,
-            model=self._config.base_model,
+            model=model_name,
         )
 
-    def _fallback_plan(self, request: PlannerRequest, *, raw_response: str) -> PlannerResponse:
+    def _fallback_plan(self, request: PlannerRequest, *, raw_response: str, model_name: str) -> PlannerResponse:
         target = self._select_fallback_target(request.query, request.adapter)
         if target is None:
             return PlannerResponse(
-                intent='general.chat',
-                tool=None,
-                domain=None,
-                service=None,
-                entity=None,
-                operation=None,
-                parameters={},
-                requiresTool=False,
-                responseType='text',
-                confidence=0.0,
-                rawResponse=raw_response,
-                adapter=request.adapter,
-                model=self._config.base_model,
+                intent='general.chat', tool=None, domain=None, service=None, entity=None, operation=None,
+                parameters={}, requiresTool=False, responseType='text', confidence=0.0,
+                rawResponse=raw_response, adapter=request.adapter, model=model_name,
             )
-
         service = target.service or request.adapter
         intent = target.intent or self._compose_intent(service, target.entity, target.operation)
         return PlannerResponse(
-            intent=intent,
-            tool=target.tool,
-            domain=target.domain,
-            service=service,
-            entity=target.entity,
-            operation=target.operation,
-            parameters={},
-            requiresTool=True,
-            responseType=target.response_type,
-            confidence=0.0,
-            rawResponse=raw_response,
-            adapter=request.adapter,
-            model=self._config.base_model,
+            intent=intent, tool=target.tool, domain=target.domain, service=service, entity=target.entity,
+            operation=target.operation, parameters={}, requiresTool=True, responseType=target.response_type,
+            confidence=0.0, rawResponse=raw_response, adapter=request.adapter, model=model_name,
         )
 
     def _select_fallback_target(self, query: str, adapter: str):
         query_tokens = self._tokens(query)
         if not query_tokens:
             return None
-
         scored = []
-        for target in self._config.planner_targets:
+        for target in self._profile.planner_targets:
             if target.service and target.service != adapter:
                 continue
             score = self._score_fallback_target(target, query, query_tokens)
             if score > 0:
                 scored.append((score, target))
-
         if not scored:
             return None
-
         scored.sort(key=lambda item: item[0], reverse=True)
         best_score = scored[0][0]
         best = [target for score, target in scored if score == best_score]
@@ -126,21 +103,7 @@ class PlannerService:
         query_token_set = set(query_tokens)
         normalized_query = ' '.join(query_tokens)
         entity_tokens = cls._tokens(target.entity)
-        target_tokens = cls._tokens(
-            ' '.join(
-                item
-                for item in (
-                    target.intent,
-                    target.tool,
-                    target.entity,
-                    target.operation,
-                    target.description,
-                    ' '.join(target.keywords),
-                )
-                if item
-            )
-        )
-
+        target_tokens = cls._tokens(' '.join(item for item in (target.intent, target.tool, target.entity, target.operation, target.description, ' '.join(target.keywords)) if item))
         score = 0.0
         if entity_tokens:
             overlap = len(set(entity_tokens) & query_token_set)
@@ -148,7 +111,6 @@ class PlannerService:
             positions = [query_tokens.index(token) for token in entity_tokens if token in query_token_set]
             if positions:
                 score += 30 / (min(positions) + 1)
-
         score += len(set(target_tokens) & query_token_set)
         for keyword in target.keywords:
             keyword_tokens = cls._tokens(keyword)
@@ -157,8 +119,9 @@ class PlannerService:
         return score
 
     def _build_prompt(self, query: str) -> str:
+        planner_prompt = self._prompt_registry.planner_prompt(self._profile)
         return (
-            f"{self._config.planner_system_prompt}\n"
+            f"{planner_prompt}\n"
             'Schema: {"domain": string|null, "service": string|null, "entity": string|null, '
             '"operation": string|null, "intent": string|null, "tool": string|null, '
             '"parameters": object, "requiresTool": boolean|null, "responseType": string|null, '
@@ -200,16 +163,12 @@ class PlannerService:
     @staticmethod
     def _get_bool(payload: dict[str, object], key: str) -> bool | None:
         value = payload.get(key)
-        if isinstance(value, bool):
-            return value
-        return None
+        return value if isinstance(value, bool) else None
 
     @staticmethod
     def _get_float(payload: dict[str, object], key: str) -> float | None:
         value = payload.get(key)
-        if isinstance(value, (int, float)):
-            return float(value)
-        return None
+        return float(value) if isinstance(value, (int, float)) else None
 
     @classmethod
     def _normalize_parameters(cls, value: object) -> dict[str, object]:
@@ -229,17 +188,11 @@ class PlannerService:
         if value is None:
             return None
         if isinstance(value, dict):
-            cleaned_dict: dict[str, object] = {}
-            for key, item in value.items():
-                if not isinstance(key, str):
-                    continue
-                cleaned_item = cls._prune_nulls(item)
-                if cleaned_item is not None:
-                    cleaned_dict[key] = cleaned_item
-            return cleaned_dict or None
+            cleaned = {str(key): item for key, item in value.items() if item is not None}
+            return cleaned or None
         if isinstance(value, list):
-            cleaned_list = [item for item in (cls._prune_nulls(item) for item in value) if item is not None]
-            return cleaned_list or None
+            cleaned = [item for item in value if item is not None]
+            return cleaned or None
         return value
 
     @staticmethod
@@ -252,9 +205,7 @@ class PlannerService:
     @staticmethod
     def _compose_intent(service: str | None, entity: str | None, operation: str | None) -> str | None:
         parts = [part for part in (service, entity, operation) if part]
-        if len(parts) < 3:
-            return None
-        return '.'.join(parts)
+        return '.'.join(parts) if len(parts) >= 3 else None
 
     @staticmethod
     def _tokens(value: str) -> list[str]:

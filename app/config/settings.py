@@ -1,4 +1,4 @@
-"""Configuration loaders for the model gateway."""
+"""Configuration loaders for the LiteLLM-backed model gateway."""
 
 from __future__ import annotations
 
@@ -20,8 +20,6 @@ Produce concise, professional enterprise responses."""
 
 
 class GenerationConfig(BaseModel):
-    """Text generation settings."""
-
     model_config = ConfigDict(extra='forbid', frozen=True)
 
     max_new_tokens: int = 128
@@ -30,12 +28,18 @@ class GenerationConfig(BaseModel):
     do_sample: bool = False
     repetition_penalty: float = 1.05
     planner_max_new_tokens: int = 128
-    use_chat_template: bool = True
+
+
+class ModelPromptsConfig(BaseModel):
+    model_config = ConfigDict(extra='forbid', frozen=True)
+
+    planner: str | None = None
+    generator: str = DEFAULT_GENERATE_SYSTEM_PROMPT
+    chat: str | None = None
+    security: str | None = None
 
 
 class PlannerTargetConfig(BaseModel):
-    """Declarative planner target used by fallback planning."""
-
     model_config = ConfigDict(extra='forbid', frozen=True)
 
     domain: str | None = None
@@ -49,31 +53,49 @@ class PlannerTargetConfig(BaseModel):
     response_type: str | None = None
 
 
-class ModelGatewayConfig(BaseModel):
-    """YAML-backed gateway configuration."""
-
+class ModelProfileConfig(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True)
 
-    base_model: str
-    default_adapter: str
-    adapters_root: Path
-    device: str = 'auto'
-    dtype: str = 'auto'
-    trust_remote_code: bool = True
-    planner_system_prompt: str
-    generate_system_prompt: str = DEFAULT_GENERATE_SYSTEM_PROMPT
+    model_name: str
+    provider: str
+    base_url: str
+    api_key: str
+    adapter_enabled: bool = False
+    default_adapter: str | None = None
+    prompts: ModelPromptsConfig = Field(default_factory=ModelPromptsConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     planner_targets: list[PlannerTargetConfig] = Field(default_factory=list)
+
+
+class RoutingConfig(BaseModel):
+    model_config = ConfigDict(extra='forbid', frozen=True)
+
+    planner_model: str = 'erp'
+    generate_model: str = 'erp'
+    security_model: str = 'general'
+    general_chat_model: str = 'general'
+
+
+class ModelGatewayConfig(BaseModel):
+    model_config = ConfigDict(extra='forbid', frozen=True)
+
+    models: dict[str, ModelProfileConfig]
+    routing: RoutingConfig = Field(default_factory=RoutingConfig)
 
     @classmethod
     def from_yaml(cls, path: Path) -> 'ModelGatewayConfig':
         payload = yaml.safe_load(path.read_text(encoding='utf-8'))
         return cls.model_validate(payload)
 
+    def get_profile(self, name: str) -> ModelProfileConfig:
+        try:
+            return self.models[name]
+        except KeyError as exc:
+            available = ', '.join(sorted(self.models)) or 'none'
+            raise ValueError(f'Unknown model profile "{name}". Available profiles: {available}.') from exc
+
 
 class Settings(BaseSettings):
-    """Environment-driven runtime settings."""
-
     model_config = SettingsConfigDict(
         env_file='.env',
         env_file_encoding='utf-8',
@@ -89,12 +111,11 @@ class Settings(BaseSettings):
     log_level: str = 'INFO'
     ready_on_startup: bool = True
     config_path: Path = Path('configs/model.yaml')
-    default_adapter: str | None = None
-    device: str | None = None
-    dtype: str | None = None
-    preload_default_adapter: bool = False
-    max_concurrent_requests: int = 1
+    max_concurrent_requests: int = 4
     metrics_enabled: bool = True
+    health_timeout_seconds: float = 10.0
+    litellm_timeout_seconds: float = 90.0
+    litellm_max_retries: int = 2
 
 
 @lru_cache(maxsize=1)
@@ -105,15 +126,4 @@ def get_settings() -> Settings:
 @lru_cache(maxsize=1)
 def get_model_config() -> ModelGatewayConfig:
     settings = get_settings()
-    path = settings.config_path
-    config = ModelGatewayConfig.from_yaml(path)
-    update_payload: dict[str, object] = {}
-    if settings.default_adapter:
-        update_payload['default_adapter'] = settings.default_adapter
-    if settings.device:
-        update_payload['device'] = settings.device
-    if settings.dtype:
-        update_payload['dtype'] = settings.dtype
-    if update_payload:
-        config = config.model_copy(update=update_payload)
-    return config
+    return ModelGatewayConfig.from_yaml(settings.config_path)

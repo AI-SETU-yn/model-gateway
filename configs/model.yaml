@@ -1,51 +1,79 @@
-base_model: Qwen/Qwen2.5-1.5B-Instruct
-default_adapter: academic
-adapters_root: adapters
-device: auto
-dtype: auto
-trust_remote_code: true
-planner_system_prompt: |
-  You are the ERP Planner model for YN Setu.
-  Return only valid JSON.
-  Extract the user's business intent, tool hint, and parameters.
-  Do not include markdown.
-generate_system_prompt: |
-  You are the YN Setu enterprise assistant.
-  Answer using only supplied enterprise tool results when tool results are available.
-  Never invent business data, names, identifiers, dates, counts, or statuses.
-  Never ask for information that is already present in the supplied data.
-  Ignore orchestration metadata such as planner intents, tool names, server names, trace IDs, latency, and debug fields.
-  Produce concise, professional enterprise responses.
-generation:
-  max_new_tokens: 128
-  temperature: 0.1
-  top_p: 0.9
-  do_sample: false
-  repetition_penalty: 1.05
-  planner_max_new_tokens: 128
-  use_chat_template: true
-planner_targets:
-  - domain: vidhya
-    service: academic
-    entity: academic_year
-    operation: list
-    intent: academic.academic_year.list
-    tool: academic.get_all_academic_years_by_branch_id
-    description: Fetches all academic years for a branch.
-    keywords:
-      - academic year
-      - academic years
-      - current academic year
-    response_type: structured
-  - domain: vidhya
-    service: academic
-    entity: holiday
-    operation: list
-    intent: academic.holiday.list
-    tool: academic.get_all_holi_days
-    description: Fetches holidays for an academic year.
-    keywords:
-      - holiday
-      - holidays
-      - holiday calendar
-    response_type: structured
+models:
+  erp:
+    model_name: qwen-erp
+    provider: openai
+    base_url: http://localhost:8000/v1
+    api_key: local
+    adapter_enabled: true
+    default_adapter: academic
+    prompts:
+      planner: |
+        You are the ERP Planner model for YN Setu.
+        Return only valid JSON.
+        Extract the user's business intent, tool hint, and parameters.
+        Do not include markdown.
+      generator: |
+        You are the YN Setu enterprise assistant.
+        Answer using only supplied enterprise tool results when tool results are available.
+        Never invent business data, names, identifiers, dates, counts, or statuses.
+        Never ask for information that is already present in the supplied data.
+        Ignore orchestration metadata such as planner intents, tool names, server names, trace IDs, latency, and debug fields.
+        Produce concise, professional enterprise responses.
+    generation:
+      max_new_tokens: 128
+      temperature: 0.1
+      top_p: 0.9
+      do_sample: false
+      repetition_penalty: 1.05
+      planner_max_new_tokens: 128
+    planner_targets:
+      - domain: vidhya
+        service: academic
+        entity: academic_year
+        operation: list
+        intent: academic.academic_year.list
+        tool: academic.get_all_academic_years_by_branch_id
+        description: Fetches all academic years for a branch.
+        keywords:
+          - academic year
+          - academic years
+          - current academic year
+        response_type: structured
+      - domain: vidhya
+        service: academic
+        entity: holiday
+        operation: list
+        intent: academic.holiday.list
+        tool: academic.get_all_holi_days
+        description: Fetches holidays for an academic year.
+        keywords:
+          - holiday
+          - holidays
+          - holiday calendar
+        response_type: structured
+  general:
+    model_name: qwen-general
+    provider: openai
+    base_url: http://localhost:8000/v1
+    api_key: local
+    adapter_enabled: false
+    prompts:
+      chat: |
+        You are a helpful enterprise AI assistant.
+      security: |
+        You are an enterprise AI security classifier.
+        Classify only.
+        Never answer the user.
+        Return JSON only.
+    generation:
+      max_new_tokens: 256
+      temperature: 0.2
+      top_p: 0.9
+      do_sample: false
+      repetition_penalty: 1.0
+      planner_max_new_tokens: 128
+routing:
+  planner_model: erp
+  generate_model: erp
+  security_model: general
+  general_chat_model: general

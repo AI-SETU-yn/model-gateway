@@ -37,6 +37,20 @@ class GenerateRequest(BaseModel):
         return self
 
 
+class GeneralChatRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid', populate_by_name=True)
+
+    prompt: str | None = None
+    messages: list[GenerateMessage] | None = None
+    response_type: str | None = Field(default='general_chat', alias='responseType')
+
+    @model_validator(mode='after')
+    def require_chat_input(self) -> 'GeneralChatRequest':
+        if self.prompt is None and not self.messages:
+            raise ValueError('GeneralChatRequest requires prompt or messages.')
+        return self
+
+
 class UsageResponse(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
@@ -67,7 +81,6 @@ class SecurityClassifyRequest(BaseModel):
 
     message: str
     system_prompt: str = Field(alias='system_prompt')
-    adapter: str | None = None
 
 
 class ReloadAdapterRequest(BaseModel):
@@ -101,3 +114,23 @@ class SecurityClassificationResponse(BaseModel):
     category: str
     confidence: float
     reason: str
+
+
+class ModelHealthItem(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    profile: str
+    model: str
+    provider: str
+    base_url: str = Field(alias='baseUrl')
+    status: str
+    latency_ms: float = Field(alias='latencyMs')
+    adapter_enabled: bool = Field(alias='adapterEnabled')
+    adapter: str | None = None
+    last_checked: str = Field(alias='lastChecked')
+
+
+class ModelHealthResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    models: list[ModelHealthItem]
