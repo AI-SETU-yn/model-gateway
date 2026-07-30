@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     health_timeout_seconds: float = 10.0
     litellm_timeout_seconds: float = 90.0
     litellm_max_retries: int = 2
+    erp_base_url: str | None = None
+    erp_api_key: str | None = None
+    general_base_url: str | None = None
+    general_api_key: str | None = None
 
 
 @lru_cache(maxsize=1)
@@ -123,7 +127,22 @@ def get_settings() -> Settings:
     return Settings()
 
 
+def _apply_profile_overrides(config: ModelGatewayConfig, settings: Settings) -> ModelGatewayConfig:
+    models: dict[str, ModelProfileConfig] = {}
+    for profile_name, profile in config.models.items():
+        updates: dict[str, str] = {}
+        configured_base_url = getattr(settings, f'{profile_name}_base_url', None)
+        configured_api_key = getattr(settings, f'{profile_name}_api_key', None)
+        if configured_base_url:
+            updates['base_url'] = configured_base_url
+        if configured_api_key:
+            updates['api_key'] = configured_api_key
+        models[profile_name] = profile.model_copy(update=updates) if updates else profile
+    return config.model_copy(update={'models': models})
+
+
 @lru_cache(maxsize=1)
 def get_model_config() -> ModelGatewayConfig:
     settings = get_settings()
-    return ModelGatewayConfig.from_yaml(settings.config_path)
+    config = ModelGatewayConfig.from_yaml(settings.config_path)
+    return _apply_profile_overrides(config, settings)

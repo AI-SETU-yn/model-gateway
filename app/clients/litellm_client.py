@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-import litellm
+import logging
 from typing import Any
+
+import litellm
 
 from app.clients.base import BaseInferenceClient
 from app.config.settings import Settings
 from app.models.inference import InferenceRequest, InferenceResponse, InferenceUsage
+
+logger = logging.getLogger(__name__)
 
 
 class LiteLLMClient(BaseInferenceClient):
@@ -14,10 +18,24 @@ class LiteLLMClient(BaseInferenceClient):
         litellm.drop_params = True
 
     async def completion(self, request: InferenceRequest) -> InferenceResponse:
+        request_id = str(request.metadata.get('request_id') or '')
+        provider = str(request.metadata.get('provider') or '')
+        api_base = str(request.metadata.get('api_base') or '')
+        model_name = str(request.metadata.get('model_name') or request.model_alias)
+        logger.info(
+            'litellm_request request_id=%s provider=%s base_url=%s model_alias=%s model_name=%s adapter=%s endpoint=%s',
+            request_id or '-',
+            provider or '-',
+            api_base or '-',
+            request.model_alias,
+            model_name,
+            request.adapter or '-',
+            'chat.completions',
+        )
         response = await litellm.acompletion(
-            model=str(request.metadata.get('model_name') or request.model_alias),
-            custom_llm_provider=str(request.metadata.get('provider') or ''),
-            api_base=str(request.metadata.get('api_base') or ''),
+            model=model_name,
+            custom_llm_provider=provider,
+            api_base=api_base,
             api_key=str(request.metadata.get('api_key') or ''),
             messages=request.to_messages(),
             timeout=self._settings.litellm_timeout_seconds,

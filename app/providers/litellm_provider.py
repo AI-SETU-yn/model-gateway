@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import AsyncIterator
 
@@ -9,6 +10,8 @@ from app.observability.inference import InferenceObserver, elapsed_ms_since
 from app.providers.base import BaseInferenceProvider
 from app.retry.circuit_breaker import CircuitBreaker
 from app.retry.policy import RetryExecutor
+
+logger = logging.getLogger(__name__)
 
 
 class LiteLLMProvider(BaseInferenceProvider):
@@ -36,6 +39,18 @@ class LiteLLMProvider(BaseInferenceProvider):
             self._observer.on_success(request, response)
             return response
         except Exception as exc:
+            logger.warning(
+                'litellm_provider_failure request_id=%s provider=%s base_url=%s model_alias=%s model_name=%s adapter=%s circuit_state=%s error_type=%s error=%s',
+                str(request.metadata.get('request_id') or '-') or '-',
+                str(request.metadata.get('provider') or '-') or '-',
+                str(request.metadata.get('api_base') or '-') or '-',
+                request.model_alias,
+                str(request.metadata.get('model_name') or request.model_alias),
+                request.adapter or '-',
+                self._circuit_breaker.state.value,
+                type(exc).__name__,
+                str(exc),
+            )
             self._observer.on_failure(
                 request,
                 provider=str(request.metadata.get('provider') or ''),

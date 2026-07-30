@@ -2,7 +2,7 @@ models:
   erp:
     model_name: qwen-erp
     provider: openai
-    base_url: http://localhost:8000/v1
+    base_url: http://localhost:4000/v1
     api_key: local
     adapter_enabled: true
     default_adapter: academic
@@ -54,7 +54,7 @@ models:
   general:
     model_name: qwen-general
     provider: openai
-    base_url: http://localhost:8000/v1
+    base_url: http://localhost:4000/v1
     api_key: local
     adapter_enabled: false
     prompts:
