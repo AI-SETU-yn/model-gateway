@@ -46,3 +46,20 @@ class GPUUnavailableError(AppException):
 class PlannerResponseError(AppException):
     status_code = 502
     code = 'PLANNER_RESPONSE_ERROR'
+
+
+class InvalidProviderConfiguration(AppException):
+    status_code = 500
+    code = 'INVALID_PROVIDER_CONFIGURATION'
+
+
+class UnsupportedProvider(InvalidProviderConfiguration):
+    code = 'UNSUPPORTED_PROVIDER'
+
+
+class MissingProviderApiKey(InvalidProviderConfiguration):
+    code = 'MISSING_PROVIDER_API_KEY'
+
+
+class MissingProviderEndpoint(InvalidProviderConfiguration):
+    code = 'MISSING_PROVIDER_ENDPOINT'

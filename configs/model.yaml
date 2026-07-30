@@ -1,11 +1,14 @@
 models:
   erp:
     model_name: qwen-erp
-    provider: openai
-    base_url: http://localhost:4000/v1
-    api_key: local
+    base_model: Qwen/Qwen2.5-1.5B-Instruct
+    provider: transformers
     adapter_enabled: true
     default_adapter: academic
+    adapters_root: adapters
+    device: auto
+    dtype: auto
+    trust_remote_code: true
     prompts:
       planner: |
         You are the ERP Planner model for YN Setu.
@@ -53,10 +56,13 @@ models:
         response_type: structured
   general:
     model_name: qwen-general
-    provider: openai
-    base_url: http://localhost:4000/v1
-    api_key: local
+    base_model: Qwen/Qwen2.5-1.5B-Instruct
+    provider: transformers
     adapter_enabled: false
+    adapters_root: adapters
+    device: auto
+    dtype: auto
+    trust_remote_code: true
     prompts:
       chat: |
         You are a helpful enterprise AI assistant.

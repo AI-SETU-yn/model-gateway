@@ -38,14 +38,7 @@ class HealthService:
             maxTokens=1,
             temperature=0.0,
             top_p=1.0,
-            metadata={
-                'provider': profile.provider,
-                'model_name': profile.model_name,
-                'api_base': profile.base_url,
-                'api_key': profile.api_key,
-                'request_id': f'health-{profile_name}',
-                'trace_id': f'health-{profile_name}',
-            },
+            metadata={'request_id': f'health-{profile_name}', 'trace_id': f'health-{profile_name}'},
         )
         status = 'UP'
         try:
@@ -55,9 +48,9 @@ class HealthService:
         latency_ms = round((time.perf_counter() - started) * 1000, 2)
         return HealthProbeResult(
             profile=profile_name,
-            provider='LiteLLM',
-            model=profile.model_name,
-            base_url=profile.base_url,
+            provider='transformers',
+            model=profile.base_model,
+            base_url='local',
             adapter_enabled=profile.adapter_enabled,
             adapter=adapter,
             status=status,
@@ -69,17 +62,5 @@ class HealthService:
         results = []
         for profile_name, profile in profiles.items():
             probe = await self.check_profile(profile_name, profile)
-            results.append(
-                ModelHealthItem(
-                    profile=probe.profile,
-                    model=probe.model,
-                    provider=probe.provider,
-                    baseUrl=probe.base_url,
-                    status=probe.status,
-                    latencyMs=probe.latency_ms,
-                    adapterEnabled=probe.adapter_enabled,
-                    adapter=probe.adapter,
-                    lastChecked=probe.last_checked,
-                )
-            )
+            results.append(ModelHealthItem(profile=probe.profile, model=probe.model, provider=probe.provider, baseUrl=probe.base_url, status=probe.status, latencyMs=probe.latency_ms, adapterEnabled=probe.adapter_enabled, adapter=probe.adapter, lastChecked=probe.last_checked))
         return ModelHealthResponse(models=results)

@@ -122,9 +122,7 @@ class BaseInferenceService:
             metadata={
                 **(metadata or {}),
                 'provider': self._profile.provider,
-                'model_name': self._profile.model_name,
-                'api_base': self._profile.base_url,
-                'api_key': self._profile.api_key,
+                'model_name': self._profile.base_model,
             },
         )
         response: InferenceResponse = await self._provider.complete(provider_request)

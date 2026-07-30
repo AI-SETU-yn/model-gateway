@@ -1,4 +1,4 @@
 from app.providers.base import BaseInferenceProvider
-from app.providers.litellm_provider import LiteLLMProvider
+from app.providers.transformers_provider import TransformersProvider
 
-__all__ = ['BaseInferenceProvider', 'LiteLLMProvider']
+__all__ = ['BaseInferenceProvider', 'TransformersProvider']

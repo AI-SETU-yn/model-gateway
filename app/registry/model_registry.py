@@ -6,7 +6,7 @@ from functools import lru_cache
 from app.config.settings import ModelGatewayConfig, ModelProfileConfig
 from app.exceptions.errors import AppException
 
-SUPPORTED_PROVIDERS = frozenset({'openai', 'azure', 'ollama', 'litellm'})
+SUPPORTED_PROVIDERS = frozenset({'transformers'})
 
 
 class ModelRegistry:
@@ -23,8 +23,8 @@ class ModelRegistry:
             aliases.add(name)
             if profile.provider not in SUPPORTED_PROVIDERS:
                 raise AppException(f'Unsupported provider "{profile.provider}" for profile "{name}".', code='INVALID_CONFIG', status_code=500)
-            if not profile.model_name or not profile.base_url or not profile.api_key:
-                raise AppException(f'Profile "{name}" is missing required model connection fields.', code='INVALID_CONFIG', status_code=500)
+            if not profile.model_name or not profile.base_model:
+                raise AppException(f'Profile "{name}" is missing required local model fields.', code='INVALID_CONFIG', status_code=500)
 
     @lru_cache(maxsize=64)
     def get(self, profile_name: str) -> ModelProfileConfig:

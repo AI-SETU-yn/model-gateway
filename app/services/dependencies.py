@@ -1,22 +1,22 @@
-"""Service dependency wiring for the LiteLLM-backed gateway."""
+"""Service dependency wiring for the self-hosted Transformers gateway."""
 
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
-from app.clients.litellm_client import LiteLLMClient
-from app.config.settings import get_model_config, get_settings
-from app.observability.inference import InferenceObserver
+from app.config.settings import get_model_config
 from app.providers.base import BaseInferenceProvider
-from app.providers.litellm_provider import LiteLLMProvider
+from app.providers.transformers_provider import TransformersProvider
 from app.registry.model_registry import ModelRegistry
 from app.registry.prompt_registry import PromptRegistry
-from app.retry.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
-from app.retry.policy import RetryExecutor, RetryPolicy
+from app.services.adapter_manager import AdapterManager
 from app.services.generation.service import ResponseGenerationService
 from app.services.general_chat.service import GeneralChatService
 from app.services.health_service import HealthService
 from app.services.inference import ERPInferenceService, GeneralInferenceService
+from app.services.loading.general_model_loader import GeneralModelLoader
+from app.services.loading.erp_model_loader import ERPModelLoader
 from app.services.metrics_service import MetricsService
 from app.services.planner import PlannerService
 from app.services.prompt_builder import PromptBuilder
@@ -40,34 +40,28 @@ def get_prompt_registry() -> PromptRegistry:
 
 
 @lru_cache(maxsize=1)
-def get_litellm_client() -> LiteLLMClient:
-    return LiteLLMClient(get_settings())
+def get_adapter_manager(adapters_root: str) -> AdapterManager:
+    project_root = Path(__file__).resolve().parents[2]
+    return AdapterManager(project_root, Path(adapters_root))
 
 
 @lru_cache(maxsize=1)
-def get_retry_policy() -> RetryPolicy:
-    settings = get_settings()
-    return RetryPolicy(max_retries=settings.litellm_max_retries, timeout_seconds=settings.litellm_timeout_seconds)
+def get_erp_loader() -> ERPModelLoader:
+    registry = get_model_registry()
+    profile_name, profile = registry.generation_profile()
+    return ERPModelLoader(profile_name, profile, get_adapter_manager(profile.adapters_root))
 
 
 @lru_cache(maxsize=1)
-def get_retry_executor() -> RetryExecutor:
-    return RetryExecutor(get_retry_policy())
-
-
-@lru_cache(maxsize=1)
-def get_circuit_breaker() -> CircuitBreaker:
-    return CircuitBreaker(CircuitBreakerConfig())
-
-
-@lru_cache(maxsize=1)
-def get_inference_observer() -> InferenceObserver:
-    return InferenceObserver()
+def get_general_loader() -> GeneralModelLoader:
+    registry = get_model_registry()
+    profile_name, profile = registry.general_chat_profile()
+    return GeneralModelLoader(profile_name, profile)
 
 
 @lru_cache(maxsize=1)
 def get_inference_provider() -> BaseInferenceProvider:
-    return LiteLLMProvider(get_litellm_client(), get_retry_executor(), get_inference_observer(), get_circuit_breaker())
+    return TransformersProvider({'erp': get_erp_loader(), 'general': get_general_loader()})
 
 
 @lru_cache(maxsize=1)

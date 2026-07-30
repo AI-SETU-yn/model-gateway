@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
     print(f'Loaded configuration: {loaded_config_path}')
     print(f'Current working directory: {Path.cwd().resolve()}')
     for profile_name, profile in config.models.items():
-        print(f'Model profile: {profile_name} -> model={profile.model_name} provider={profile.provider} base_url={profile.base_url}')
+        print(f'Model profile: {profile_name} -> model={profile.model_name} provider={profile.provider} base_model={profile.base_model}')
     _log_environment_verification()
     registry = get_model_registry()
     try:

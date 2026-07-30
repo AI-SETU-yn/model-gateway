@@ -1,4 +1,4 @@
-"""Configuration loaders for the LiteLLM-backed model gateway."""
+"""Configuration loaders for the self-hosted Transformers-backed model gateway."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 DEFAULT_GENERATE_SYSTEM_PROMPT = """You are the YN Setu enterprise assistant.
 Answer using only supplied enterprise tool results when tool results are available.
@@ -57,11 +56,14 @@ class ModelProfileConfig(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True)
 
     model_name: str
-    provider: str
-    base_url: str
-    api_key: str
+    base_model: str
+    provider: str = 'transformers'
     adapter_enabled: bool = False
     default_adapter: str | None = None
+    adapters_root: str = 'adapters'
+    device: str = 'auto'
+    dtype: str = 'auto'
+    trust_remote_code: bool = True
     prompts: ModelPromptsConfig = Field(default_factory=ModelPromptsConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     planner_targets: list[PlannerTargetConfig] = Field(default_factory=list)
@@ -114,12 +116,6 @@ class Settings(BaseSettings):
     max_concurrent_requests: int = 4
     metrics_enabled: bool = True
     health_timeout_seconds: float = 10.0
-    litellm_timeout_seconds: float = 90.0
-    litellm_max_retries: int = 2
-    erp_base_url: str | None = None
-    erp_api_key: str | None = None
-    general_base_url: str | None = None
-    general_api_key: str | None = None
 
 
 @lru_cache(maxsize=1)
@@ -127,22 +123,7 @@ def get_settings() -> Settings:
     return Settings()
 
 
-def _apply_profile_overrides(config: ModelGatewayConfig, settings: Settings) -> ModelGatewayConfig:
-    models: dict[str, ModelProfileConfig] = {}
-    for profile_name, profile in config.models.items():
-        updates: dict[str, str] = {}
-        configured_base_url = getattr(settings, f'{profile_name}_base_url', None)
-        configured_api_key = getattr(settings, f'{profile_name}_api_key', None)
-        if configured_base_url:
-            updates['base_url'] = configured_base_url
-        if configured_api_key:
-            updates['api_key'] = configured_api_key
-        models[profile_name] = profile.model_copy(update=updates) if updates else profile
-    return config.model_copy(update={'models': models})
-
-
 @lru_cache(maxsize=1)
 def get_model_config() -> ModelGatewayConfig:
     settings = get_settings()
-    config = ModelGatewayConfig.from_yaml(settings.config_path)
-    return _apply_profile_overrides(config, settings)
+    return ModelGatewayConfig.from_yaml(settings.config_path)
