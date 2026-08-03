@@ -13,6 +13,9 @@ class GenerateMessage(BaseModel):
 class GenerationPolicy(BaseModel):
     model_config = ConfigDict(extra='forbid', populate_by_name=True)
 
+    grounded: bool = True
+    hallucination: str = 'forbid'
+    output_format: str = Field(default='markdown', alias='format')
     use_tool_results_only: bool = Field(default=True, alias='useToolResultsOnly')
     never_invent_business_data: bool = Field(default=True, alias='neverInventBusinessData')
     never_ask_for_present_data: bool = Field(default=True, alias='neverAskForPresentData')
@@ -20,20 +23,30 @@ class GenerationPolicy(BaseModel):
     concise: bool = True
 
 
+class ConversationContext(BaseModel):
+    model_config = ConfigDict(extra='allow', populate_by_name=True)
+
+    user_question: str | None = Field(default=None, alias='userQuestion')
+    planner_intent: str | None = Field(default=None, alias='plannerIntent')
+    execution_plan: list[dict[str, Any]] = Field(default_factory=list, alias='executionPlan')
+
+
 class GenerateRequest(BaseModel):
     model_config = ConfigDict(extra='forbid', populate_by_name=True)
 
-    adapter: str
-    prompt: str | None = None
+    adapter: str = ''
     messages: list[GenerateMessage] | None = None
     tool_result: Any | None = Field(default=None, alias='toolResult')
     response_type: str | None = Field(default=None, alias='responseType')
     generation_policy: GenerationPolicy | None = Field(default=None, alias='generationPolicy')
+    conversation: ConversationContext | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    missing_parameters: list[str] = Field(default_factory=list, alias='missingParameters')
 
     @model_validator(mode='after')
     def require_generation_input(self) -> 'GenerateRequest':
-        if self.prompt is None and not self.messages and self.tool_result is None:
-            raise ValueError('GenerateRequest requires prompt, messages, or toolResult.')
+        if not self.messages and self.tool_result is None:
+            raise ValueError('GenerateRequest requires messages or toolResult.')
         return self
 
 
@@ -70,10 +83,30 @@ class GenerateResponse(BaseModel):
 
 
 class PlannerRequest(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra='forbid', populate_by_name=True)
 
-    adapter: str
+    adapter: str = ''
     query: str
+    prompt: str | None = None
+    registry_context: str | None = Field(default=None, alias='registryContext')
+    registry_metadata: Any | None = Field(default=None, alias='registryMetadata')
+
+
+class ExecutionPlanStep(BaseModel):
+    model_config = ConfigDict(extra='allow', populate_by_name=True)
+
+    step_id: str | None = Field(default=None, alias='stepId')
+    intent: str | None = None
+    domain: str | None = None
+    service: str | None = None
+    entity: str | None = None
+    operation: str | None = None
+    tool: str | None = None
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    depends_on: list[str] = Field(default_factory=list, alias='dependsOn')
+    parameter_bindings: dict[str, Any] = Field(default_factory=dict, alias='parameterBindings')
+    question: str | None = None
+    visible_in_response: bool | None = Field(default=None, alias='visibleInResponse')
 
 
 class SecurityClassifyRequest(BaseModel):
@@ -101,6 +134,7 @@ class PlannerResponse(BaseModel):
     parameters: dict[str, object] = Field(default_factory=dict)
     requires_tool: bool | None = Field(default=None, alias='requiresTool')
     response_type: str | None = Field(default=None, alias='responseType')
+    execution_plan: list[ExecutionPlanStep] = Field(default_factory=list, alias='executionPlan')
     confidence: float | None = None
     raw_response: str = Field(alias='rawResponse')
     adapter: str

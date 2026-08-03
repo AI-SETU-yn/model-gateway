@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 
 from app.schemas.health import HealthResponse, MetricsResponse
 from app.schemas.inference import ModelHealthResponse
-from app.services.dependencies import get_erp_loader, get_health_service, get_metrics_service, get_model_registry
+from app.services.dependencies import get_erp_model_loader, get_health_service, get_metrics_service, get_model_registry
 from app.services.health_service import HealthService
 from app.services.metrics_service import MetricsService
 
@@ -12,7 +12,7 @@ router = APIRouter(tags=['management'])
 
 
 @router.get('/health', response_model=HealthResponse)
-async def health(registry=Depends(get_model_registry), loader=Depends(get_erp_loader)) -> HealthResponse:
+async def health(registry=Depends(get_model_registry), loader=Depends(get_erp_model_loader)) -> HealthResponse:
     _, erp_profile = registry.planner_profile()
     return HealthResponse(
         status='ok',

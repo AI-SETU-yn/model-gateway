@@ -16,15 +16,24 @@ async def test_health_service_returns_up_status() -> None:
             'models': {
                 'erp': {
                     'model_name': 'qwen-erp',
+                    'base_model': 'qwen-erp',
                     'provider': 'openai',
                     'base_url': 'http://localhost:8000/v1',
                     'api_key': 'local',
                     'adapter_enabled': True,
-                    'default_adapter': 'academic',
+                    'default_adapter': 'service_alpha',
                 }
-            }
+            },
+            'routing': {
+                'planner_model': 'erp',
+                'generate_model': 'erp',
+                'security_model': 'erp',
+                'general_chat_model': 'erp',
+            },
         }
     )
     response = await HealthService(StubProvider()).check_all(config.models)
     assert response.models[0].status == 'UP'
-    assert response.models[0].adapter == 'academic'
+    assert response.models[0].provider == 'openai'
+    assert response.models[0].base_url == 'http://localhost:8000/v1'
+    assert response.models[0].adapter == 'service_alpha'

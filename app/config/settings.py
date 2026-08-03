@@ -12,6 +12,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_GENERATE_SYSTEM_PROMPT = """You are the YN Setu enterprise assistant.
 Answer using only supplied enterprise tool results when tool results are available.
+You own all user-facing wording for enterprise, general, current information, clarification, failure, empty-result, and multi-tool responses.
 Never invent business data, names, identifiers, dates, counts, or statuses.
 Never ask for information that is already present in the supplied data.
 Ignore orchestration metadata such as planner intents, tool names, server names, trace IDs, latency, and debug fields.
@@ -38,26 +39,17 @@ class ModelPromptsConfig(BaseModel):
     security: str | None = None
 
 
-class PlannerTargetConfig(BaseModel):
-    model_config = ConfigDict(extra='forbid', frozen=True)
-
-    domain: str | None = None
-    service: str | None = None
-    entity: str
-    operation: str
-    intent: str | None = None
-    tool: str | None = None
-    description: str | None = None
-    keywords: list[str] = Field(default_factory=list)
-    response_type: str | None = None
-
-
 class ModelProfileConfig(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True)
 
     model_name: str
     base_model: str
-    provider: str = 'transformers'
+    provider: str
+    deployment_name: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+    api_version: str | None = None
+    organization: str | None = None
     adapter_enabled: bool = False
     default_adapter: str | None = None
     adapters_root: str = 'adapters'
@@ -66,23 +58,22 @@ class ModelProfileConfig(BaseModel):
     trust_remote_code: bool = True
     prompts: ModelPromptsConfig = Field(default_factory=ModelPromptsConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
-    planner_targets: list[PlannerTargetConfig] = Field(default_factory=list)
 
 
 class RoutingConfig(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True)
 
-    planner_model: str = 'erp'
-    generate_model: str = 'erp'
-    security_model: str = 'general'
-    general_chat_model: str = 'general'
+    planner_model: str
+    generate_model: str
+    security_model: str
+    general_chat_model: str
 
 
 class ModelGatewayConfig(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True)
 
     models: dict[str, ModelProfileConfig]
-    routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    routing: RoutingConfig
 
     @classmethod
     def from_yaml(cls, path: Path) -> 'ModelGatewayConfig':
@@ -116,6 +107,10 @@ class Settings(BaseSettings):
     max_concurrent_requests: int = 4
     metrics_enabled: bool = True
     health_timeout_seconds: float = 10.0
+    litellm_timeout_seconds: float = 90.0
+    litellm_max_retries: int = 2
+    litellm_circuit_failure_threshold: int = 5
+    litellm_circuit_recovery_timeout_seconds: float = 30.0
 
 
 @lru_cache(maxsize=1)

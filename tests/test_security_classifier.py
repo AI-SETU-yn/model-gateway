@@ -1,5 +1,7 @@
 import pytest
 
+from app.config.settings import ModelProfileConfig
+from app.registry.prompt_registry import PromptRegistry
 from app.schemas.inference import SecurityClassifyRequest
 from app.services.security_classifier import SecurityClassifierService
 
@@ -27,6 +29,14 @@ class StubInferenceService:
 @pytest.mark.asyncio
 async def test_security_classifier_service_parses_gateway_json_response():
     service = SecurityClassifierService(
+        'general',
+        ModelProfileConfig(
+            model_name='test-model',
+            base_model='test-model',
+            provider='transformers',
+            prompts={'security': 'classify only'},
+        ),
+        PromptRegistry(),
         StubInferenceService('{"safe": false, "category": "PROMPT_INJECTION", "confidence": 0.98, "reason": "Attempts to override system instructions."}'),
     )
 

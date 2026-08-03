@@ -20,14 +20,8 @@ class PromptBundle:
     building_ms: float
 
 
-@dataclass(frozen=True)
-class LegacyPromptParts:
-    user_message: str
-    tool_result: Any | None
-
-
 class PromptBuilder:
-    """Build model-facing chat messages from legacy and structured requests."""
+    """Build model-facing chat messages from structured response requests."""
 
     _TRANSPORT_METADATA_KEYS = frozenset(
         {
@@ -41,9 +35,6 @@ class PromptBuilder:
             'tool_execution_latency_ms',
         }
     )
-    _TOOL_RESULT_MARKER = 'Tool execution result:'
-    _USER_MESSAGE_MARKER = 'User message:'
-
     def __init__(self, default_system_prompt: str) -> None:
         self._default_system_prompt = default_system_prompt.strip()
 
@@ -54,37 +45,34 @@ class PromptBuilder:
             messages = self._normalize_messages(request.messages)
             source = 'structured_messages'
         else:
-            legacy_parts = self._extract_legacy_prompt_parts(request.prompt or '')
-            if legacy_parts is None:
-                messages = [{'role': 'user', 'content': request.prompt or ''}]
-            else:
-                messages = [{'role': 'user', 'content': legacy_parts.user_message}]
-                if tool_result is None:
-                    tool_result = legacy_parts.tool_result
-            source = 'legacy_prompt'
+            messages = []
+            source = 'structured_tool_result'
 
         preprocessing_ms = (time.perf_counter() - preprocessing_started) * 1000
         building_started = time.perf_counter()
-        if tool_result is not None and source == 'legacy_prompt':
-            source = 'legacy_prompt+extracted_tool_result'
-
         if tool_result is not None and source == 'structured_messages':
             source = 'structured_messages+tool_result'
 
         if request.messages and tool_result is None:
             source = 'structured_messages'
 
-        if not request.messages and tool_result is None:
-            source = 'legacy_prompt'
-
         system_prompt = self._build_system_prompt(request.generation_policy, request.response_type)
         messages = self._ensure_system_message(messages, system_prompt)
+
+        response_context = self._response_context(request)
+        if response_context:
+            messages.append(
+                {
+                    'role': 'tool',
+                    'content': json.dumps({'response_context': response_context}, ensure_ascii=False, default=str, indent=2),
+                }
+            )
 
         if tool_result is not None:
             messages.append(
                 {
                     'role': 'tool',
-                    'content': self._serialize_tool_result(tool_result),
+                    'content': self._serialize_tool_result(request),
                 }
             )
 
@@ -100,6 +88,7 @@ class PromptBuilder:
         extras: list[str] = []
         if response_type:
             extras.append(f'Target response type: {response_type}.')
+            extras.extend(self._response_type_rules(response_type))
 
         if policy is None:
             if not extras:
@@ -107,6 +96,12 @@ class PromptBuilder:
             return f"{self._default_system_prompt}\n\n" + '\n'.join(extras)
 
         rules: list[str] = extras
+        if policy.grounded:
+            rules.append('Ground the answer in the supplied structured context and tool results.')
+        if policy.hallucination:
+            rules.append(f'Hallucination policy: {policy.hallucination}.')
+        if policy.output_format:
+            rules.append(f'Preferred output format: {policy.output_format}.')
         if policy.use_tool_results_only:
             rules.append('Use only supplied tool results for enterprise facts.')
         if policy.never_invent_business_data:
@@ -122,8 +117,54 @@ class PromptBuilder:
         return f"{self._default_system_prompt}\n\nAdditional generation policy:\n" + '\n'.join(f'- {rule}' for rule in rules)
 
     @staticmethod
+    def _response_type_rules(response_type: str) -> list[str]:
+        normalized = response_type.strip().casefold()
+        if normalized in {'enterprise', 'multi_tool', 'current_info'}:
+            return [
+                'Create the final user-facing answer from the supplied data only.',
+                'Do not expose raw orchestration metadata unless the user explicitly asks for it.',
+            ]
+        if normalized == 'clarification':
+            return [
+                'Ask one concise question that helps collect the missing required parameter values.',
+                'If options are supplied, present them clearly without inventing additional options.',
+            ]
+        if normalized == 'tool_failure':
+            return [
+                'Explain that the requested data could not be retrieved using the supplied failure details.',
+                'Do not invent replacement enterprise data.',
+            ]
+        if normalized == 'planner_failure':
+            return [
+                'Explain that the request could not be matched to an available action.',
+                'Ask the user to rephrase or provide the missing detail.',
+            ]
+        if normalized == 'empty_result':
+            return [
+                'Explain that no matching records were returned.',
+                'Do not invent records.',
+            ]
+        if normalized == 'validation_retry':
+            return [
+                'Rewrite the previous answer so it is strictly grounded in the supplied data.',
+                'Remove any unsupported claims.',
+            ]
+        return []
+
+    @staticmethod
     def _normalize_messages(messages: list[GenerateMessage]) -> list[dict[str, str]]:
         return [{'role': message.role, 'content': message.content} for message in messages]
+
+    @staticmethod
+    def _response_context(request: GenerateRequest) -> dict[str, Any]:
+        context: dict[str, Any] = {}
+        if request.conversation is not None:
+            context['conversation'] = request.conversation.model_dump(by_alias=True, exclude_none=True)
+        if request.missing_parameters:
+            context['missingParameters'] = request.missing_parameters
+        if request.metadata:
+            context['metadata'] = request.metadata
+        return context
 
     @staticmethod
     def _ensure_system_message(messages: list[dict[str, str]], system_prompt: str) -> list[dict[str, str]]:
@@ -136,52 +177,74 @@ class PromptBuilder:
         return [{'role': 'system', 'content': system_prompt}, *messages]
 
     @classmethod
-    def _extract_legacy_prompt_parts(cls, prompt: str) -> LegacyPromptParts | None:
-        tool_marker_index = prompt.find(cls._TOOL_RESULT_MARKER)
-        user_marker_index = prompt.find(cls._USER_MESSAGE_MARKER)
-        if tool_marker_index == -1 or user_marker_index == -1 or user_marker_index <= tool_marker_index:
-            return None
-
-        tool_text_start = tool_marker_index + len(cls._TOOL_RESULT_MARKER)
-        tool_text = prompt[tool_text_start:user_marker_index].strip()
-        user_message = prompt[user_marker_index + len(cls._USER_MESSAGE_MARKER):].strip()
-        if not user_message:
-            user_message = prompt.strip()
-
-        tool_result = cls._parse_json_prefix(tool_text)
-        if tool_result is None:
-            return LegacyPromptParts(user_message=user_message, tool_result=None)
-        return LegacyPromptParts(user_message=user_message, tool_result=tool_result)
-
-    @staticmethod
-    def _parse_json_prefix(value: str) -> Any | None:
-        candidate = value.strip()
-        if not candidate:
-            return None
-        try:
-            parsed, _ = json.JSONDecoder().raw_decode(candidate)
-            return parsed
-        except json.JSONDecodeError:
-            return None
-
-    @classmethod
-    def _serialize_tool_result(cls, tool_result: Any) -> str:
-        normalized = cls._extract_business_payload(tool_result)
+    def _serialize_tool_result(cls, request: GenerateRequest) -> str:
+        normalized = cls._tool_result_for_prompt(request)
         normalized = cls._normalize_json_strings(normalized)
         if isinstance(normalized, str):
             return normalized
         return json.dumps(normalized, ensure_ascii=False, default=str, indent=2)
 
     @classmethod
-    def _extract_business_payload(cls, value: Any) -> Any:
+    def _tool_result_for_prompt(cls, request: GenerateRequest) -> Any:
+        tool_result = request.tool_result
+        if not cls._is_multi_tool_request(request) or not isinstance(tool_result, dict):
+            return cls._extract_payload(tool_result)
+
+        steps = tool_result.get('steps')
+        if not isinstance(steps, list):
+            return cls._extract_payload(tool_result)
+
+        visible_step_ids = cls._visible_step_ids(request)
+        if not visible_step_ids:
+            return cls._extract_payload(tool_result.get('data', tool_result))
+
+        step_by_id = {
+            step.get('step_id'): step
+            for step in steps
+            if isinstance(step, dict) and isinstance(step.get('step_id'), str)
+        }
+        visible_results = []
+        for step_id in visible_step_ids:
+            step = step_by_id.get(step_id)
+            if not isinstance(step, dict):
+                continue
+            result = step.get('result')
+            if result is not None:
+                visible_results.append(cls._extract_payload(result))
+
+        if not visible_results:
+            return cls._extract_payload(tool_result.get('data', tool_result))
+        if len(visible_results) == 1:
+            return visible_results[0]
+        return {'results': visible_results}
+
+    @staticmethod
+    def _is_multi_tool_request(request: GenerateRequest) -> bool:
+        return (request.response_type or '').strip().casefold() == 'multi_tool'
+
+    @staticmethod
+    def _visible_step_ids(request: GenerateRequest) -> list[str]:
+        if request.conversation is None:
+            return []
+        visible_step_ids = []
+        for index, step in enumerate(request.conversation.execution_plan, start=1):
+            if step.get('visible_in_response') is False or step.get('visibleInResponse') is False:
+                continue
+            step_id = step.get('step_id') or step.get('stepId') or f'step_{index}'
+            if isinstance(step_id, str):
+                visible_step_ids.append(step_id)
+        return visible_step_ids
+
+    @classmethod
+    def _extract_payload(cls, value: Any) -> Any:
         if isinstance(value, dict):
             if 'data' in value and cls._TRANSPORT_METADATA_KEYS.intersection(value):
-                return cls._extract_business_payload(value['data'])
+                return cls._extract_payload(value['data'])
             content = value.get('content')
             if isinstance(content, list):
                 extracted = cls._extract_mcp_text_content(content)
                 if extracted is not None:
-                    return cls._extract_business_payload(extracted)
+                    return cls._extract_payload(extracted)
         return value
 
     @classmethod

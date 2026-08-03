@@ -6,8 +6,6 @@ from functools import lru_cache
 from app.config.settings import ModelGatewayConfig, ModelProfileConfig
 from app.exceptions.errors import AppException
 
-SUPPORTED_PROVIDERS = frozenset({'transformers'})
-
 
 class ModelRegistry:
     def __init__(self, config: ModelGatewayConfig) -> None:
@@ -21,8 +19,8 @@ class ModelRegistry:
             if name in aliases:
                 raise AppException(f'Duplicate model profile alias: {name}', code='INVALID_CONFIG', status_code=500)
             aliases.add(name)
-            if profile.provider not in SUPPORTED_PROVIDERS:
-                raise AppException(f'Unsupported provider "{profile.provider}" for profile "{name}".', code='INVALID_CONFIG', status_code=500)
+            if not profile.provider.strip():
+                raise AppException(f'Profile "{name}" is missing provider.', code='INVALID_CONFIG', status_code=500)
             if not profile.model_name or not profile.base_model:
                 raise AppException(f'Profile "{name}" is missing required local model fields.', code='INVALID_CONFIG', status_code=500)
 

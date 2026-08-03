@@ -21,45 +21,56 @@ class FakeTokenizer:
         return 'rendered chat prompt'
 
 
-def test_generate_request_keeps_legacy_prompt_contract() -> None:
-    request = GenerateRequest.model_validate({'adapter': 'academic', 'prompt': 'legacy prompt'})
-
-    assert request.adapter == 'academic'
-    assert request.prompt == 'legacy prompt'
-    assert request.messages is None
-
-
-def test_generate_request_accepts_future_structured_contract() -> None:
+def test_generate_request_accepts_structured_response_contract() -> None:
     request = GenerateRequest.model_validate(
         {
             'adapter': 'academic',
             'messages': [{'role': 'user', 'content': 'List academic years'}],
             'toolResult': {'data': [{'academicYear': '2025-2026'}]},
-            'responseType': 'structured_summary',
-            'generationPolicy': {'useToolResultsOnly': True},
+            'responseType': 'enterprise',
+            'generationPolicy': {
+                'grounded': True,
+                'hallucination': 'forbid',
+                'format': 'markdown',
+                'useToolResultsOnly': True,
+            },
+            'conversation': {
+                'userQuestion': 'List academic years',
+                'plannerIntent': 'academic.academic_year.list',
+                'executionPlan': [{'step_id': 'step_1', 'intent': 'academic.academic_year.list'}],
+            },
+            'metadata': {'runtime': 'ai-runtime-v2'},
+            'missingParameters': ['academic_year_id'],
         }
     )
 
-    assert request.prompt is None
     assert request.messages is not None
     assert request.tool_result == {'data': [{'academicYear': '2025-2026'}]}
-    assert request.response_type == 'structured_summary'
+    assert request.response_type == 'enterprise'
     assert request.generation_policy is not None
+    assert request.generation_policy.output_format == 'markdown'
+    assert request.conversation is not None
+    assert request.conversation.planner_intent == 'academic.academic_year.list'
+    assert request.metadata == {'runtime': 'ai-runtime-v2'}
+    assert request.missing_parameters == ['academic_year_id']
 
 
-def test_generate_request_requires_prompt_messages_or_tool_result() -> None:
-    with pytest.raises(ValueError):
+def test_generate_request_requires_messages_or_tool_result() -> None:
+    with pytest.raises(ValueError, match='messages or toolResult'):
         GenerateRequest.model_validate({'adapter': 'academic'})
 
 
-def test_prompt_builder_wraps_legacy_prompt_with_system_message() -> None:
-    request = GenerateRequest.model_validate({'adapter': 'academic', 'prompt': 'legacy prompt'})
+def test_prompt_builder_wraps_structured_messages_with_system_message() -> None:
+    request = GenerateRequest.model_validate({
+        'adapter': 'academic',
+        'messages': [{'role': 'user', 'content': 'structured message'}],
+    })
     bundle = PromptBuilder(DEFAULT_SYSTEM_PROMPT).build(request)
 
-    assert bundle.source == 'legacy_prompt'
+    assert bundle.source == 'structured_messages'
     assert bundle.messages == [
         {'role': 'system', 'content': DEFAULT_SYSTEM_PROMPT},
-        {'role': 'user', 'content': 'legacy prompt'},
+        {'role': 'user', 'content': 'structured message'},
     ]
 
 
@@ -80,6 +91,27 @@ def test_prompt_builder_normalizes_nested_json_tool_result_strings() -> None:
     assert '"text"' not in bundle.messages[-1]['content']
     assert '\\"academicYear\\"' not in bundle.messages[-1]['content']
     assert '"academicYear": "2025-2026"' in bundle.messages[-1]['content']
+
+
+def test_prompt_builder_adds_structured_response_context() -> None:
+    request = GenerateRequest.model_validate(
+        {
+            'adapter': 'academic',
+            'messages': [{'role': 'user', 'content': 'Which value is missing?'}],
+            'responseType': 'clarification',
+            'toolResult': {'status': 'requires_input'},
+            'conversation': {'userQuestion': 'Which value is missing?', 'plannerIntent': 'academic.item.list'},
+            'metadata': {'response_type': 'clarification'},
+            'missingParameters': ['item_id'],
+        }
+    )
+
+    bundle = PromptBuilder(DEFAULT_SYSTEM_PROMPT).build(request)
+
+    assert [message['role'] for message in bundle.messages] == ['system', 'user', 'tool', 'tool']
+    assert 'Target response type: clarification.' in bundle.messages[0]['content']
+    assert '"missingParameters": [' in bundle.messages[2]['content']
+    assert '"item_id"' in bundle.messages[2]['content']
 
 
 def test_prompt_builder_strips_runtime_transport_wrapper_when_tool_result_contains_data() -> None:
@@ -109,31 +141,111 @@ def test_prompt_builder_strips_runtime_transport_wrapper_when_tool_result_contai
     assert '"academicYear": "2025-2026"' in bundle.messages[-1]['content']
 
 
-def test_prompt_builder_extracts_business_data_from_legacy_runtime_prompt() -> None:
-    legacy_prompt = (
-        'You are the Yn AI Setu assistant.\n'
-        'Planner intent: academic.academic_year.list\n'
-        'Requires tool: True\n'
-        'Tool execution result: '
-        '{"tool_name":"academic.get_all_academic_years_by_branch_id","server":"vidhya-mcp",'
-        '"status":"success","success":true,"response_type":"structured",'
-        '"data":{"content":[{"type":"text","text":"{\\"data\\":[{\\"academicYear\\":\\"2025-2026\\"}]}"}]},'
-        '"registry_lookup_latency_ms":1.2,"tool_execution_latency_ms":44.5}\n\n'
-        'User message:\n'
-        'List all academic years'
+def test_prompt_builder_strips_transport_metadata_from_structured_runtime_result() -> None:
+    request = GenerateRequest.model_validate(
+        {
+            'adapter': 'academic',
+            'messages': [{'role': 'user', 'content': 'List all academic years'}],
+            'toolResult': {
+                'tool_name': 'academic.get_all_academic_years_by_branch_id',
+                'server': 'vidhya-mcp',
+                'status': 'success',
+                'success': True,
+                'response_type': 'structured',
+                'data': {'content': [{'type': 'text', 'text': '{"data":[{"academicYear":"2025-2026"}]}'}]},
+                'registry_lookup_latency_ms': 1.2,
+                'tool_execution_latency_ms': 44.5,
+            },
+        }
     )
-    request = GenerateRequest.model_validate({'adapter': 'academic', 'prompt': legacy_prompt})
 
     bundle = PromptBuilder(DEFAULT_SYSTEM_PROMPT).build(request)
 
-    assert bundle.source == 'legacy_prompt+extracted_tool_result'
+    assert bundle.source == 'structured_messages+tool_result'
     assert [message['role'] for message in bundle.messages] == ['system', 'user', 'tool']
     assert bundle.messages[1]['content'] == 'List all academic years'
-    assert 'academic.academic_year.list' not in bundle.messages[1]['content']
     assert '"tool_name"' not in bundle.messages[-1]['content']
     assert '"server"' not in bundle.messages[-1]['content']
     assert '"registry_lookup_latency_ms"' not in bundle.messages[-1]['content']
     assert '"academicYear": "2025-2026"' in bundle.messages[-1]['content']
+
+
+def test_prompt_builder_builds_multi_tool_context_from_visible_steps() -> None:
+    request = GenerateRequest.model_validate(
+        {
+            'adapter': 'academic',
+            'messages': [{'role': 'user', 'content': 'List two datasets'}],
+            'responseType': 'multi_tool',
+            'conversation': {
+                'userQuestion': 'List two datasets',
+                'executionPlan': [
+                    {'step_id': 'step_1', 'visible_in_response': True},
+                    {'step_id': 'step_2', 'visible_in_response': True},
+                ],
+            },
+            'toolResult': {
+                'success': True,
+                'steps': [
+                    {
+                        'step_id': 'step_1',
+                        'result': {
+                            'tool_name': 'generic.first',
+                            'server': 'mcp',
+                            'success': True,
+                            'data': {'items': [{'name': 'Alpha'}]},
+                        },
+                    },
+                    {
+                        'step_id': 'step_2',
+                        'result': {
+                            'tool_name': 'generic.second',
+                            'server': 'mcp',
+                            'success': True,
+                            'data': {'items': [{'name': 'Beta'}]},
+                        },
+                    },
+                ],
+            },
+        }
+    )
+
+    bundle = PromptBuilder(DEFAULT_SYSTEM_PROMPT).build(request)
+
+    assert '"results": [' in bundle.messages[-1]['content']
+    assert '"name": "Alpha"' in bundle.messages[-1]['content']
+    assert '"name": "Beta"' in bundle.messages[-1]['content']
+    assert '"tool_name"' not in bundle.messages[-1]['content']
+    assert '"server"' not in bundle.messages[-1]['content']
+
+
+def test_prompt_builder_hides_invisible_multi_tool_helper_steps() -> None:
+    request = GenerateRequest.model_validate(
+        {
+            'adapter': 'academic',
+            'messages': [{'role': 'user', 'content': 'List dependent result'}],
+            'responseType': 'multi_tool',
+            'conversation': {
+                'userQuestion': 'List dependent result',
+                'executionPlan': [
+                    {'step_id': 'step_1', 'visible_in_response': False},
+                    {'step_id': 'step_2', 'visible_in_response': True},
+                ],
+            },
+            'toolResult': {
+                'success': True,
+                'steps': [
+                    {'step_id': 'step_1', 'result': {'success': True, 'data': {'items': [{'name': 'Alpha'}]}}},
+                    {'step_id': 'step_2', 'result': {'success': True, 'data': {'items': [{'name': 'Beta'}]}}},
+                ],
+                'data': {'items': [{'name': 'Beta'}]},
+            },
+        }
+    )
+
+    bundle = PromptBuilder(DEFAULT_SYSTEM_PROMPT).build(request)
+
+    assert '"name": "Beta"' in bundle.messages[-1]['content']
+    assert '"name": "Alpha"' not in bundle.messages[-1]['content']
 
 
 def test_generation_parameters_omit_sampling_kwargs_when_sampling_disabled() -> None:

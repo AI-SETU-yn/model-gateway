@@ -10,12 +10,17 @@ def test_prompt_registry_returns_descriptor() -> None:
             'models': {
                 'general': {
                     'model_name': 'qwen-general',
-                    'provider': 'openai',
-                    'base_url': 'http://localhost:8000/v1',
-                    'api_key': 'local',
+                    'base_model': 'Qwen/Qwen2.5-1.5B-Instruct',
+                    'provider': 'transformers',
                     'prompts': {'chat': 'hello'}
                 }
-            }
+            },
+            'routing': {
+                'planner_model': 'general',
+                'generate_model': 'general',
+                'security_model': 'general',
+                'general_chat_model': 'general',
+            },
         }
     )
     profile = config.get_profile('general')

@@ -42,15 +42,18 @@ class HealthService:
         )
         status = 'UP'
         try:
-            await self._provider.complete(request)
+            if profile.adapter_enabled and not adapter:
+                status = 'CONFIGURED'
+            else:
+                await self._provider.complete(request)
         except Exception:
             status = 'DOWN'
         latency_ms = round((time.perf_counter() - started) * 1000, 2)
         return HealthProbeResult(
             profile=profile_name,
-            provider='transformers',
+            provider=profile.provider,
             model=profile.base_model,
-            base_url='local',
+            base_url=profile.base_url or 'local',
             adapter_enabled=profile.adapter_enabled,
             adapter=adapter,
             status=status,

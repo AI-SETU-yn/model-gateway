@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.config.settings import ModelProfileConfig
 from app.registry.prompt_registry import PromptRegistry
-from app.schemas.inference import GenerateRequest, GenerateResponse, GeneralChatRequest
+from app.schemas.inference import GenerateMessage, GenerateRequest, GenerateResponse, GeneralChatRequest
 from app.services.inference import GeneralInferenceService
 from app.services.prompt_builder import PromptBuilder
 
@@ -21,10 +21,12 @@ class GeneralChatService:
         self._prompt_builder = PromptBuilder(prompt_registry.get(profile_name, 'chat', profile).content)
 
     async def chat(self, request: GeneralChatRequest) -> GenerateResponse:
+        messages = request.messages
+        if messages is None and request.prompt is not None:
+            messages = [GenerateMessage(role='user', content=request.prompt)]
         generate_request = GenerateRequest(
             adapter='',
-            prompt=request.prompt,
-            messages=request.messages,
+            messages=messages,
             responseType=request.response_type or 'general_chat',
         )
         self._inference_service._prompt_builder = self._prompt_builder
