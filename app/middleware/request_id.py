@@ -41,20 +41,31 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             span.set_attribute('http.route', request.url.path)
             span.set_attribute('request.id', request_id)
 
+            response = None
             try:
                 response = await call_next(request)
+                return response
             except Exception as exc:
                 span.record_exception(exc)
+                logger.exception('request_failed path=%s method=%s status=500', request.url.path, request.method)
                 raise
             finally:
                 elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
-                logger.info('request_completed path=%s method=%s latency_ms=%s', request.url.path, request.method, elapsed_ms)
+                status_code = getattr(response, 'status_code', 500)
+                span.set_attribute('http.status_code', status_code)
+                logger.info(
+                    'request_completed path=%s method=%s status=%s latency_ms=%s',
+                    request.url.path,
+                    request.method,
+                    status_code,
+                    elapsed_ms,
+                )
                 request_id_var.reset(request_token)
                 trace_id_var.reset(trace_token)
                 span_id_var.reset(span_token)
 
-            response.headers['X-Request-ID'] = request_id
-            response.headers['X-Trace-ID'] = trace_id
-            response.headers['X-Span-ID'] = span_id
-            response.headers['X-Response-Time-Ms'] = str(elapsed_ms)
-            return response
+        response.headers['X-Request-ID'] = request_id
+        response.headers['X-Trace-ID'] = trace_id
+        response.headers['X-Span-ID'] = span_id
+        response.headers['X-Response-Time-Ms'] = str(elapsed_ms)
+        return response

@@ -100,6 +100,7 @@ class LiteLLMService(BaseInferenceProvider):
                 span.set_attribute('llm.endpoint', profile.endpoint)
                 span.set_attribute('llm.request_id', request_id_var.get() or '-')
                 span.set_attribute('llm.retry_attempt', attempt)
+                span.set_attribute('llm.stream', False)
 
                 started = time.perf_counter()
                 try:
@@ -107,24 +108,30 @@ class LiteLLMService(BaseInferenceProvider):
                         self._acompletion(request, model=model, profile=profile),
                         timeout=self._settings.request_timeout,
                     )
-                    litellm_latency_ms = round((time.perf_counter() - started) * 1000, 2)
+                    provider_latency_ms = round((time.perf_counter() - started) * 1000, 2)
                     normalized = self._normalize_response(response)
+                    retry_count = attempt - 1
                     span.set_attribute('llm.trace_id', trace_id)
                     span.set_attribute('llm.span_id', span_id)
-                    span.set_attribute('llm.latency_ms', litellm_latency_ms)
+                    span.set_attribute('llm.provider_latency_ms', provider_latency_ms)
+                    span.set_attribute('llm.ttft_ms', provider_latency_ms)
                     span.set_attribute('llm.prompt_tokens', normalized.usage.prompt_tokens)
                     span.set_attribute('llm.completion_tokens', normalized.usage.completion_tokens)
                     span.set_attribute('llm.total_tokens', normalized.usage.total_tokens)
+                    span.set_attribute('llm.retry_count', retry_count)
                     logger.info(
-                        'litellm_chat_completed request_id=%s model=%s provider=%s backend=%s latency_ms=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s',
-                        request_id_var.get() or '-',
+                        'provider_chat_completed model=%s provider=%s backend=%s stream=%s http_status=%s provider_latency_ms=%s ttft_ms=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s retry_count=%s',
                         normalized.model,
                         profile.provider,
                         profile.backend,
-                        litellm_latency_ms,
+                        False,
+                        200,
+                        provider_latency_ms,
+                        provider_latency_ms,
                         normalized.usage.prompt_tokens,
                         normalized.usage.completion_tokens,
                         normalized.usage.total_tokens,
+                        retry_count,
                     )
                     return normalized
                 except Exception as exc:  # pragma: no cover
@@ -133,13 +140,17 @@ class LiteLLMService(BaseInferenceProvider):
                     span.record_exception(exc)
                     span.set_attribute('error.type', type(mapped).__name__)
                     span.set_attribute('error.message', mapped.message)
+                    span.set_attribute('error.count', 1)
                     should_retry = self._should_retry(mapped, attempt)
                     logger.warning(
-                        'litellm_chat_failed request_id=%s model=%s attempt=%s retry=%s error_type=%s error=%s',
-                        request_id_var.get() or '-',
+                        'provider_chat_failed model=%s provider=%s stream=%s http_status=%s attempt=%s retry=%s retry_count=%s error_type=%s error=%s',
                         model,
+                        profile.provider,
+                        False,
+                        mapped.status_code,
                         attempt,
                         should_retry,
+                        attempt - 1,
                         type(mapped).__name__,
                         mapped.message,
                     )
@@ -160,26 +171,39 @@ class LiteLLMService(BaseInferenceProvider):
         async def event_generator() -> AsyncIterator[str]:
             await self._validate_registered_model(model, profile)
             started = time.perf_counter()
+            ttft_ms: float | None = None
+            chunks = 0
             try:
                 stream = await self._acompletion(request, model=model, profile=profile, stream=True)
                 async for chunk in stream:
+                    now = round((time.perf_counter() - started) * 1000, 2)
+                    if ttft_ms is None:
+                        ttft_ms = now
+                    chunks += 1
                     payload = chunk.model_dump() if hasattr(chunk, 'model_dump') else chunk
                     yield f'data: {json.dumps(payload)}\n\n'
-                latency_ms = round((time.perf_counter() - started) * 1000, 2)
+                provider_latency_ms = round((time.perf_counter() - started) * 1000, 2)
                 logger.info(
-                    'litellm_chat_stream_completed request_id=%s model=%s provider=%s latency_ms=%s',
-                    request_id_var.get() or '-',
+                    'provider_chat_stream_completed model=%s provider=%s backend=%s stream=%s http_status=%s provider_latency_ms=%s ttft_ms=%s chunks=%s retry_count=%s',
                     model,
                     profile.provider,
-                    latency_ms,
+                    profile.backend,
+                    True,
+                    200,
+                    provider_latency_ms,
+                    ttft_ms if ttft_ms is not None else provider_latency_ms,
+                    chunks,
+                    0,
                 )
                 yield 'data: [DONE]\n\n'
             except Exception as exc:  # pragma: no cover
                 mapped = self._map_exception(exc)
                 logger.warning(
-                    'litellm_chat_stream_failed request_id=%s model=%s error_type=%s error=%s',
-                    request_id_var.get() or '-',
+                    'provider_chat_stream_failed model=%s provider=%s stream=%s http_status=%s error_type=%s error=%s',
                     model,
+                    profile.provider,
+                    True,
+                    mapped.status_code,
                     type(mapped).__name__,
                     mapped.message,
                 )
@@ -188,40 +212,46 @@ class LiteLLMService(BaseInferenceProvider):
         return event_generator()
 
     async def check_connectivity(self) -> ReadinessResult:
-        """Verify LiteLLM reachability, remote model listing, and inference readiness."""
+        """Verify LiteLLM SDK availability, upstream reachability, and inference readiness."""
 
         checks: dict[str, Any] = {
             'configured': True,
-            'registry_loaded': True,
-            'registry_path': str(self._model_registry.path.resolve()),
-            'litellm_reachable': False,
-            'models_endpoint_reachable': False,
-            'default_model_registered': False,
-            'default_model_remote_available': False,
+            'model_registry_loaded': True,
+            'model_registry_path': str(self._model_registry.path.resolve()),
+            'litellm_sdk_available': False,
+            'litellm_base_url': self._settings.litellm_base_url,
+            'upstream_models_endpoint': self._settings.models_url,
+            'upstream_reachable': False,
+            'configured_model_registered': False,
+            'configured_model_remote_available': False,
             'remote_inference_ready': False,
-            'base_url': self._settings.litellm_base_url,
-            'default_model': self._settings.default_model,
+            'configured_model': self._settings.default_model,
         }
 
         remote_models: set[str] = set()
         try:
+            self._get_litellm()
+            checks['litellm_sdk_available'] = True
+        except Exception as exc:  # pragma: no cover
+            checks['litellm_error'] = str(exc)
+
+        try:
             response = await self._http_client.get(self._settings.models_url, headers=self._headers())
-            if response.status_code < 500:
-                checks['litellm_reachable'] = True
             response.raise_for_status()
-            checks['models_endpoint_reachable'] = True
+            checks['upstream_reachable'] = True
             payload = response.json()
             remote_models = {item.get('id', '') for item in payload.get('data', []) if item.get('id')}
             checks['remote_models'] = sorted(remote_models)
         except Exception as exc:
             mapped = self._map_exception(exc)
-            checks['models_error'] = mapped.message
+            checks['upstream_error'] = mapped.message
 
         try:
             _, profile = self._model_registry.resolve(self._settings.default_model)
-            checks['default_model_registered'] = True
+            checks['configured_model_registered'] = True
+            checks['configured_model_endpoint'] = profile.endpoint
             if self._settings.default_model in remote_models:
-                checks['default_model_remote_available'] = True
+                checks['configured_model_remote_available'] = True
             await self._validate_registered_model(self._settings.default_model, profile, remote_models=remote_models)
             probe_request = ChatRequest(
                 messages=[{'role': 'user', 'content': 'ping'}],
@@ -238,14 +268,15 @@ class LiteLLMService(BaseInferenceProvider):
             bool(checks[key])
             for key in (
                 'configured',
-                'registry_loaded',
-                'litellm_reachable',
-                'models_endpoint_reachable',
-                'default_model_registered',
-                'default_model_remote_available',
+                'model_registry_loaded',
+                'litellm_sdk_available',
+                'upstream_reachable',
+                'configured_model_registered',
+                'configured_model_remote_available',
                 'remote_inference_ready',
             )
         )
+        logger.info('startup_validation healthy=%s checks=%s', healthy, checks)
         return ReadinessResult(healthy=healthy, checks=checks)
 
     async def _acompletion(
@@ -281,7 +312,7 @@ class LiteLLMService(BaseInferenceProvider):
             remote_models = await self._fetch_remote_model_ids()
         if model not in remote_models:
             raise ResourceNotFoundError(
-                f'Model "{model}" is registered in {self._model_registry.path.name} but not exposed by LiteLLM/vLLM.'
+                f'Model "{model}" is registered in {self._model_registry.path.name} but not exposed by the upstream endpoint.'
             )
 
     async def _fetch_remote_model_ids(self) -> set[str]:
@@ -303,7 +334,7 @@ class LiteLLMService(BaseInferenceProvider):
         return min(0.5 * (2 ** (attempt - 1)), 8.0)
 
     def _should_retry(self, exc: GatewayError, attempt: int) -> bool:
-        return attempt < self._settings.max_retries and exc.status_code in {408, 429, 502, 503}
+        return attempt < self._settings.max_retries and exc.status_code in {408, 429, 500, 502, 503}
 
     @staticmethod
     def _map_exception(exc: Exception) -> GatewayError:
@@ -314,7 +345,7 @@ class LiteLLMService(BaseInferenceProvider):
         if isinstance(exc, httpx.TimeoutException):
             return RequestTimeoutError('LiteLLM request timed out.')
         if isinstance(exc, httpx.ConnectError):
-            return ServiceUnavailableError('Unable to connect to LiteLLM.')
+            return ServiceUnavailableError('Unable to connect to the upstream model endpoint.')
         if isinstance(exc, httpx.HTTPStatusError):
             status_code = exc.response.status_code
             message = exc.response.text or str(exc)
@@ -331,10 +362,12 @@ class LiteLLMService(BaseInferenceProvider):
             return RequestTimeoutError(message or 'LiteLLM request timed out.')
         if status_code == 429:
             return RateLimitError(message or 'LiteLLM rate limit exceeded.')
+        if status_code == 500:
+            return UpstreamServerError(message or 'LiteLLM upstream failure.')
+        if status_code in {502, 504}:
+            return UpstreamServerError(message or 'LiteLLM upstream failure.')
         if status_code == 503:
             return ServiceUnavailableError(message or 'LiteLLM service unavailable.')
-        if status_code in {500, 502, 504}:
-            return UpstreamServerError(message or 'LiteLLM upstream failure.')
         return UpstreamServerError(message or 'Unexpected LiteLLM failure.')
 
     @staticmethod

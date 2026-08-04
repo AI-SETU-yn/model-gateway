@@ -3,11 +3,30 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.core.exceptions import BadRequestError, ResourceNotFoundError, ServiceUnavailableError
+
+
+class UniqueKeyLoader(yaml.SafeLoader):
+    """YAML loader that rejects duplicate mapping keys."""
+
+
+
+def _construct_unique_mapping(loader: UniqueKeyLoader, node: yaml.nodes.MappingNode, deep: bool = False) -> dict[str, Any]:
+    mapping: dict[str, Any] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise ServiceUnavailableError(f'Duplicate model registry key detected: {key}')
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping)
 
 
 class RegisteredModel(BaseModel):
@@ -21,6 +40,19 @@ class RegisteredModel(BaseModel):
     supports_streaming: bool = Field(alias='supports_streaming')
     default: bool = False
 
+    @model_validator(mode='after')
+    def validate_fields(self) -> 'RegisteredModel':
+        self.provider = self.provider.strip()
+        self.backend = self.backend.strip()
+        self.endpoint = self.endpoint.strip().rstrip('/')
+        if not self.provider:
+            raise ValueError('provider must not be empty.')
+        if not self.backend:
+            raise ValueError('backend must not be empty.')
+        if not self.endpoint.startswith(('http://', 'https://')):
+            raise ValueError('endpoint must start with http:// or https://.')
+        return self
+
 
 class ModelRegistryPayload(BaseModel):
     """Full YAML registry document."""
@@ -28,6 +60,15 @@ class ModelRegistryPayload(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
     models: dict[str, RegisteredModel]
+
+    @model_validator(mode='after')
+    def validate_defaults(self) -> 'ModelRegistryPayload':
+        defaults = [name for name, model in self.models.items() if model.default]
+        if not self.models:
+            raise ValueError('models registry must contain at least one model.')
+        if len(defaults) > 1:
+            raise ValueError(f'Only one default model is allowed, found: {", ".join(defaults)}')
+        return self
 
 
 class ModelRegistry:
@@ -42,9 +83,11 @@ class ModelRegistry:
         if not path.exists():
             raise ServiceUnavailableError(f'Model registry file not found: {path}')
         try:
-            raw = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
+            raw = yaml.load(path.read_text(encoding='utf-8'), Loader=UniqueKeyLoader) or {}
             return ModelRegistryPayload.model_validate(raw)
-        except (yaml.YAMLError, ValidationError) as exc:
+        except ServiceUnavailableError:
+            raise
+        except (yaml.YAMLError, ValidationError, ValueError) as exc:
             raise ServiceUnavailableError(f'Invalid model registry configuration: {exc}') from exc
 
     @property

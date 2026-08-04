@@ -32,9 +32,9 @@ class Settings(BaseSettings):
     litellm_base_url: str = Field(alias='LITELLM_BASE_URL')
     litellm_api_key: SecretStr | None = Field(default=None, alias='API_KEY')
     default_model: str = Field(alias='DEFAULT_MODEL')
-    request_timeout: float = Field(default=60.0, alias='REQUEST_TIMEOUT')
-    max_retries: int = Field(default=3, alias='MAX_RETRIES')
-    models_config_path: Path = Path('configs/models.yaml')
+    request_timeout: float = Field(alias='REQUEST_TIMEOUT')
+    max_retries: int = Field(alias='MAX_RETRIES')
+    models_config_path: Path = Field(alias='MODEL_REGISTRY_PATH')
 
     @field_validator('litellm_base_url')
     @classmethod
@@ -68,6 +68,14 @@ class Settings(BaseSettings):
             raise ValueError('MAX_RETRIES must be at least 1.')
         return value
 
+    @field_validator('models_config_path')
+    @classmethod
+    def validate_models_config_path(cls, value: Path) -> Path:
+        normalized = Path(str(value)).expanduser()
+        if not str(normalized).strip():
+            raise ValueError('MODEL_REGISTRY_PATH must not be empty.')
+        return normalized
+
     @property
     def api_key(self) -> str | None:
         return self.litellm_api_key.get_secret_value() if self.litellm_api_key else None
@@ -76,11 +84,6 @@ class Settings(BaseSettings):
     def models_url(self) -> str:
         base = self.litellm_base_url
         return f'{base}/models' if base.endswith('/v1') else f'{base}/v1/models'
-
-    @property
-    def chat_completions_url(self) -> str:
-        base = self.litellm_base_url
-        return f'{base}/chat/completions' if base.endswith('/v1') else f'{base}/v1/chat/completions'
 
     @property
     def health_url(self) -> str:
