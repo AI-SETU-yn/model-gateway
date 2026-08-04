@@ -1,5 +1,6 @@
+import asyncio
+
 import httpx
-import pytest
 
 from app.core.config import Settings
 from app.core.model_registry import ModelRegistry
@@ -14,11 +15,10 @@ class StubAsyncClient:
 
     async def get(self, url, headers=None):
         request = httpx.Request('GET', url)
-        return httpx.Response(self.status_code, json=self.payload, request=request, text=self.text)
+        return httpx.Response(self.status_code, json=self.payload, request=request)
 
 
-@pytest.mark.asyncio
-async def test_check_connectivity_reports_healthy(monkeypatch, tmp_path):
+def test_check_connectivity_reports_healthy(monkeypatch, tmp_path):
     registry_path = tmp_path / 'models.yaml'
     registry_path.write_text(
         'models:\n  qwen-erp:\n    provider: litellm\n    backend: vllm\n    endpoint: http://127.0.0.1:4000/v1\n    supports_streaming: true\n    default: true\n',
@@ -38,10 +38,14 @@ async def test_check_connectivity_reports_healthy(monkeypatch, tmp_path):
     async def fake_generate_chat(request, *, model, profile):
         return {'id': 'chatcmpl-1', 'model': model, 'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': 'pong'}, 'finish_reason': 'stop'}], 'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2}}
 
+    async def fake_validate_registered_model(model, profile, *, remote_models=None):
+        return None
+
     monkeypatch.setattr(service, 'generate_chat', fake_generate_chat)
+    monkeypatch.setattr(service, '_validate_registered_model', fake_validate_registered_model)
     monkeypatch.setattr(service, '_get_litellm', staticmethod(lambda: object()))
 
-    result = await service.check_connectivity()
+    result = asyncio.run(service.check_connectivity())
 
     assert result.healthy is True
     assert result.checks['litellm_sdk_available'] is True
