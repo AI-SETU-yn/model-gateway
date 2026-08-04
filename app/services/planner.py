@@ -17,22 +17,32 @@ logger = logging.getLogger(__name__)
 
 
 class PlannerService:
-    def __init__(
-        self,
-        profile_name: str,
-        profile: ModelProfileConfig,
-        prompt_registry: PromptRegistry,
-        inference_service: ERPInferenceService,
-    ) -> None:
-        self._profile_name = profile_name
-        self._profile = profile
-        self._prompt_registry = prompt_registry
-        self._inference_service = inference_service
+    def __init__(self, *args) -> None:
+        if len(args) == 2:
+            profile, inference_service = args
+            self._profile_name = 'erp'
+            self._profile = profile
+            self._prompt_registry = PromptRegistry()
+            self._inference_service = inference_service
+            return
+        if len(args) == 4:
+            profile_name, profile, prompt_registry, inference_service = args
+            self._profile_name = profile_name
+            self._profile = profile
+            self._prompt_registry = prompt_registry
+            self._inference_service = inference_service
+            return
+        raise TypeError('PlannerService expects either (profile, inference_service) or (profile_name, profile, prompt_registry, inference_service).')
 
     async def plan(self, request: PlannerRequest) -> PlannerResponse:
         prompt = self._build_prompt(request.query)
         try:
-            raw_response, _, model_name = await self._inference_service.planner_generate(request.adapter, prompt)
+            planner_result = await self._inference_service.planner_generate(request.adapter, prompt)
+            if len(planner_result) == 3:
+                raw_response, _, model_name = planner_result
+            else:
+                raw_response, _ = planner_result
+                model_name = self._profile.model_name
             parsed = self._parse_json(raw_response)
         except Exception as exc:
             logger.exception('planner_model_failed_using_fallback', extra={'adapter': request.adapter, 'query': request.query})

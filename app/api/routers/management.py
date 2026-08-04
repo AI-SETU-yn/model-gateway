@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from app.schemas.health import HealthResponse, MetricsResponse
 from app.schemas.inference import ModelHealthResponse
-from app.services.dependencies import get_erp_loader, get_health_service, get_metrics_service, get_model_registry
+from app.services.dependencies import get_health_service, get_metrics_service, get_model_registry
 from app.services.health_service import HealthService
 from app.services.metrics_service import MetricsService
 
@@ -12,15 +12,32 @@ router = APIRouter(tags=['management'])
 
 
 @router.get('/health', response_model=HealthResponse)
-async def health(registry=Depends(get_model_registry), loader=Depends(get_erp_loader)) -> HealthResponse:
+async def health(registry=Depends(get_model_registry)) -> HealthResponse:
     _, erp_profile = registry.planner_profile()
+    loaded_adapters = [erp_profile.default_adapter] if erp_profile.adapter_enabled and erp_profile.default_adapter else []
     return HealthResponse(
         status='ok',
-        baseModelLoaded=loader.base_model_loaded,
+        baseModelLoaded=True,
         defaultAdapter=erp_profile.default_adapter or '',
-        loadedAdapters=loader.loaded_adapters,
-        device=loader.resolved_device,
-        dtype=loader.resolved_dtype,
+        loadedAdapters=loaded_adapters,
+        device=erp_profile.device,
+        dtype=erp_profile.dtype,
+    )
+
+
+@router.get('/ready', response_model=HealthResponse)
+async def ready(request: Request, registry=Depends(get_model_registry), service: HealthService = Depends(get_health_service)) -> HealthResponse:
+    _, erp_profile = registry.planner_profile()
+    loaded_adapters = [erp_profile.default_adapter] if erp_profile.adapter_enabled and erp_profile.default_adapter else []
+    is_ready = await service.readiness(registry.all_profiles())
+    request.app.state.is_ready = is_ready
+    return HealthResponse(
+        status='ok' if is_ready else 'not_ready',
+        baseModelLoaded=is_ready,
+        defaultAdapter=erp_profile.default_adapter or '',
+        loadedAdapters=loaded_adapters,
+        device=erp_profile.device,
+        dtype=erp_profile.dtype,
     )
 
 

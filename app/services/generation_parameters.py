@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from transformers import PreTrainedTokenizerBase
+if TYPE_CHECKING:
+    from transformers import PreTrainedTokenizerBase
+else:
+    PreTrainedTokenizerBase = Any
 
 from app.config.settings import GenerationConfig
 

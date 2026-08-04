@@ -1,45 +1,10 @@
-from __future__ import annotations
+from app.core.exceptions import gateway_exception_handler as app_exception_handler
+from app.core.exceptions import register_exception_handlers
+from app.core.exceptions import unhandled_exception_handler, validation_exception_handler as request_validation_exception_handler
 
-import logging
-
-from fastapi import Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-
-from app.exceptions.errors import AppException
-from app.schemas.common import ErrorResponse
-
-logger = logging.getLogger(__name__)
-
-
-async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
-    logger.warning('app_exception', extra={'code': exc.code, 'error_message': exc.message, 'path': request.url.path})
-    body = ErrorResponse(
-        code=exc.code,
-        message=exc.message,
-        request_id=getattr(request.state, 'request_id', None),
-        correlation_id=getattr(request.state, 'correlation_id', None),
-    )
-    return JSONResponse(status_code=exc.status_code, content=body.model_dump())
-
-
-async def request_validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    logger.warning('request_validation_error', extra={'path': request.url.path, 'errors': exc.errors()})
-    body = ErrorResponse(
-        code='VALIDATION_ERROR',
-        message='Invalid request payload.',
-        request_id=getattr(request.state, 'request_id', None),
-        correlation_id=getattr(request.state, 'correlation_id', None),
-    )
-    return JSONResponse(status_code=422, content=body.model_dump())
-
-
-async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception('unhandled_exception', extra={'path': request.url.path})
-    body = ErrorResponse(
-        code='INTERNAL_ERROR',
-        message='An unexpected error occurred.',
-        request_id=getattr(request.state, 'request_id', None),
-        correlation_id=getattr(request.state, 'correlation_id', None),
-    )
-    return JSONResponse(status_code=500, content=body.model_dump())
+__all__ = [
+    'app_exception_handler',
+    'request_validation_exception_handler',
+    'unhandled_exception_handler',
+    'register_exception_handlers',
+]

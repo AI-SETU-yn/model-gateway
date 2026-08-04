@@ -1,13 +1,18 @@
-models:
+﻿models:
   erp:
-    model_name: qwen-erp
-    base_model: Qwen/Qwen2.5-1.5B-Instruct
-    provider: transformers
+    model_name: ${MODEL_GATEWAY_ERP_MODEL_NAME:qwen-erp}
+    base_model: ${MODEL_GATEWAY_ERP_BASE_MODEL:Qwen/Qwen2.5-1.5B-Instruct}
+    provider:
+      type: ${MODEL_GATEWAY_ERP_PROVIDER:vllm}
+      api_base: ${MODEL_GATEWAY_ERP_API_BASE:http://127.0.0.1:4000/v1}
+      api_key: ${MODEL_GATEWAY_ERP_API_KEY:local}
+      deployment_name: ${MODEL_GATEWAY_ERP_DEPLOYMENT:qwen-erp}
+      timeout_seconds: 90.0
     adapter_enabled: true
     default_adapter: academic
     adapters_root: adapters
-    device: auto
-    dtype: auto
+    device: remote
+    dtype: remote
     trust_remote_code: true
     prompts:
       planner: |
@@ -55,13 +60,18 @@ models:
           - holiday calendar
         response_type: structured
   general:
-    model_name: qwen-general
-    base_model: Qwen/Qwen2.5-1.5B-Instruct
-    provider: transformers
+    model_name: ${MODEL_GATEWAY_GENERAL_MODEL_NAME:qwen-general}
+    base_model: ${MODEL_GATEWAY_GENERAL_BASE_MODEL:Qwen/Qwen2.5-1.5B-Instruct}
+    provider:
+      type: ${MODEL_GATEWAY_GENERAL_PROVIDER:vllm}
+      api_base: ${MODEL_GATEWAY_GENERAL_API_BASE:http://127.0.0.1:4000/v1}
+      api_key: ${MODEL_GATEWAY_GENERAL_API_KEY:local}
+      deployment_name: ${MODEL_GATEWAY_GENERAL_DEPLOYMENT:qwen-general}
+      timeout_seconds: 90.0
     adapter_enabled: false
     adapters_root: adapters
-    device: auto
-    dtype: auto
+    device: remote
+    dtype: remote
     trust_remote_code: true
     prompts:
       chat: |

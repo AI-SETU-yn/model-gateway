@@ -48,9 +48,9 @@ class HealthService:
         latency_ms = round((time.perf_counter() - started) * 1000, 2)
         return HealthProbeResult(
             profile=profile_name,
-            provider='transformers',
-            model=profile.base_model,
-            base_url='local',
+            provider=profile.provider_type,
+            model=profile.provider_config.deployment_name or profile.model_name,
+            base_url=profile.provider_config.api_base or 'default',
             adapter_enabled=profile.adapter_enabled,
             adapter=adapter,
             status=status,
@@ -64,3 +64,7 @@ class HealthService:
             probe = await self.check_profile(profile_name, profile)
             results.append(ModelHealthItem(profile=probe.profile, model=probe.model, provider=probe.provider, baseUrl=probe.base_url, status=probe.status, latencyMs=probe.latency_ms, adapterEnabled=probe.adapter_enabled, adapter=probe.adapter, lastChecked=probe.last_checked))
         return ModelHealthResponse(models=results)
+
+    async def readiness(self, profiles: dict[str, ModelProfileConfig]) -> bool:
+        response = await self.check_all(profiles)
+        return all(model.status == 'UP' for model in response.models)

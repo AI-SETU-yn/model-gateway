@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 
 from app.config.settings import ModelGatewayConfig
 from app.registry.prompt_registry import PromptRegistry
@@ -10,6 +10,7 @@ def test_prompt_registry_returns_descriptor() -> None:
             'models': {
                 'general': {
                     'model_name': 'qwen-general',
+                    'base_model': 'Qwen/Qwen2.5-1.5B-Instruct',
                     'provider': 'openai',
                     'base_url': 'http://localhost:8000/v1',
                     'api_key': 'local',

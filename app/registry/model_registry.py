@@ -1,12 +1,28 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections import OrderedDict
 from functools import lru_cache
 
 from app.config.settings import ModelGatewayConfig, ModelProfileConfig
-from app.exceptions.errors import AppException
+from app.exceptions.errors import AppException, MissingProviderApiKey, MissingProviderEndpoint
 
-SUPPORTED_PROVIDERS = frozenset({'transformers'})
+SUPPORTED_PROVIDERS = frozenset({
+    'litellm',
+    'vllm',
+    'openai',
+    'azure',
+    'azure_openai',
+    'ollama',
+    'huggingface',
+    'huggingface_endpoint',
+    'together_ai',
+    'togetherai',
+    'groq',
+    'openrouter',
+})
+
+_PROVIDER_ENDPOINT_REQUIRED = frozenset({'litellm', 'vllm', 'ollama', 'huggingface_endpoint', 'azure', 'azure_openai'})
+_PROVIDER_API_KEY_REQUIRED = frozenset({'openai', 'azure', 'azure_openai', 'huggingface', 'huggingface_endpoint', 'together_ai', 'togetherai', 'groq', 'openrouter', 'litellm', 'vllm'})
 
 
 class ModelRegistry:
@@ -21,10 +37,18 @@ class ModelRegistry:
             if name in aliases:
                 raise AppException(f'Duplicate model profile alias: {name}', code='INVALID_CONFIG', status_code=500)
             aliases.add(name)
-            if profile.provider not in SUPPORTED_PROVIDERS:
-                raise AppException(f'Unsupported provider "{profile.provider}" for profile "{name}".', code='INVALID_CONFIG', status_code=500)
+            provider_type = profile.provider_type
+            if provider_type not in SUPPORTED_PROVIDERS:
+                raise AppException(f'Unsupported provider "{provider_type}" for profile "{name}".', code='INVALID_CONFIG', status_code=500)
             if not profile.model_name or not profile.base_model:
-                raise AppException(f'Profile "{name}" is missing required local model fields.', code='INVALID_CONFIG', status_code=500)
+                raise AppException(f'Profile "{name}" is missing required model fields.', code='INVALID_CONFIG', status_code=500)
+            provider = profile.provider_config
+            if provider_type in _PROVIDER_ENDPOINT_REQUIRED and not (provider.api_base or '').strip():
+                raise MissingProviderEndpoint(f'Provider "{provider_type}" for profile "{name}" requires api_base.')
+            if provider_type in _PROVIDER_API_KEY_REQUIRED and not (provider.api_key or '').strip():
+                raise MissingProviderApiKey(f'Provider "{provider_type}" for profile "{name}" requires api_key.')
+            if provider_type in {'azure', 'azure_openai'} and not (provider.deployment_name or profile.model_name or '').strip():
+                raise AppException(f'Provider "{provider_type}" for profile "{name}" requires deployment_name.', code='INVALID_CONFIG', status_code=500)
 
     @lru_cache(maxsize=64)
     def get(self, profile_name: str) -> ModelProfileConfig:

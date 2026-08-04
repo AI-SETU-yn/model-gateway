@@ -1,50 +1,15 @@
-import app.api.routers.management as management_module
-import app.main as main_module
 from app.main import create_app
-from app.services.dependencies import get_erp_model_loader, get_metrics_service
+from app.services.dependencies import get_health_service, get_metrics_service
 from fastapi.testclient import TestClient
 
 
-class StubModelLoader:
-    def __init__(self) -> None:
-        self.base_model_loaded = True
-        self.loaded_adapters: list[str] = []
-        self.resolved_device = 'cuda'
-        self.resolved_dtype = 'auto'
-        self.initialize_calls: list[bool] = []
-
-    async def initialize(self, preload_default_adapter: bool = False) -> None:
-        self.initialize_calls.append(preload_default_adapter)
-        if preload_default_adapter and 'academic' not in self.loaded_adapters:
-            self.loaded_adapters.append('academic')
-
-    async def reload_adapter(self, adapter_name: str) -> None:
-        if adapter_name not in self.loaded_adapters:
-            self.loaded_adapters.append(adapter_name)
-
-
-class StubGeneralModelLoader:
-    def __init__(self) -> None:
-        self.base_model_loaded = True
-        self.initialize_calls = 0
-
-    async def initialize(self, preload_default_adapter: bool = False) -> None:
-        self.initialize_calls += 1
-
-
 class StubMetricsService:
-    def __init__(self) -> None:
-        self.reload_calls = 0
-
-    def record_adapter_reload(self) -> None:
-        self.reload_calls += 1
-
     def snapshot(self):
         return {
             'requestsTotal': 0,
             'generationRequests': 0,
             'plannerRequests': 0,
-            'adapterReloadRequests': self.reload_calls,
+            'adapterReloadRequests': 0,
             'adapterCacheHits': 0,
             'adapterCacheMisses': 0,
             'failuresTotal': 0,
@@ -55,27 +20,18 @@ class StubMetricsService:
         }
 
 
-def _build_client(stub_loader: StubModelLoader) -> TestClient:
-    main_module.get_erp_model_loader = lambda: stub_loader
-    main_module.get_general_model_loader = lambda: StubGeneralModelLoader()
-    management_module.get_model_config = lambda: type('Config', (), {'routing': type('Routing', (), {'planner_model': 'erp'})(), 'get_profile': lambda self, _: type('Profile', (), {'default_adapter': 'academic'})()})()
+class StubHealthService:
+    def __init__(self, ready: bool) -> None:
+        self._ready = ready
+
+    async def readiness(self, profiles) -> bool:
+        return self._ready
+
+
+def test_health_reports_remote_provider_shape() -> None:
     app = create_app()
-    app.dependency_overrides[get_erp_model_loader] = lambda: stub_loader
     app.dependency_overrides[get_metrics_service] = lambda: StubMetricsService()
-    return TestClient(app)
-
-
-def test_startup_preloads_configured_default_adapter() -> None:
-    stub_loader = StubModelLoader()
-    with _build_client(stub_loader):
-        pass
-    assert stub_loader.initialize_calls == [True]
-    assert stub_loader.loaded_adapters == ['academic']
-
-
-def test_health_reports_configured_default_adapter() -> None:
-    stub_loader = StubModelLoader()
-    with _build_client(stub_loader) as client:
+    with TestClient(app) as client:
         response = client.get('/health')
     assert response.status_code == 200
     body = response.json()
@@ -83,16 +39,40 @@ def test_health_reports_configured_default_adapter() -> None:
     assert body['baseModelLoaded'] is True
     assert body['defaultAdapter'] == 'academic'
     assert body['loadedAdapters'] == ['academic']
-    assert body['device'] == 'cuda'
-    assert body['dtype'] == 'auto'
+    assert body['device'] == 'remote'
+    assert body['dtype'] == 'remote'
 
 
-def test_reload_adapter_keeps_management_path_working() -> None:
-    stub_loader = StubModelLoader()
-    with _build_client(stub_loader) as client:
-        response = client.post('/reload-adapter', json={'adapter': 'hrms'})
+def test_ready_reports_not_ready_when_remote_inference_is_down() -> None:
+    app = create_app()
+    app.dependency_overrides[get_metrics_service] = lambda: StubMetricsService()
+    app.dependency_overrides[get_health_service] = lambda: StubHealthService(False)
+    with TestClient(app) as client:
+        response = client.get('/ready')
     assert response.status_code == 200
     body = response.json()
-    assert body['adapter'] == 'hrms'
-    assert body['reloaded'] is True
-    assert body['loadedAdapters'] == ['academic', 'hrms']
+    assert body['status'] == 'not_ready'
+    assert body['baseModelLoaded'] is False
+
+
+def test_ready_reports_ok_when_remote_inference_is_up() -> None:
+    app = create_app()
+    app.dependency_overrides[get_metrics_service] = lambda: StubMetricsService()
+    app.dependency_overrides[get_health_service] = lambda: StubHealthService(True)
+    with TestClient(app) as client:
+        response = client.get('/ready')
+    assert response.status_code == 200
+    body = response.json()
+    assert body['status'] == 'ok'
+    assert body['baseModelLoaded'] is True
+
+
+def test_metrics_endpoint_contract_is_preserved() -> None:
+    app = create_app()
+    app.dependency_overrides[get_metrics_service] = lambda: StubMetricsService()
+    with TestClient(app) as client:
+        response = client.get('/metrics')
+    assert response.status_code == 200
+    body = response.json()
+    assert body['requestsTotal'] == 0
+    assert body['plannerRequests'] == 0

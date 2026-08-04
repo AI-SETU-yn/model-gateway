@@ -1,4 +1,4 @@
-"""LiteLLM-backed inference services."""
+﻿"""LiteLLM-backed inference services."""
 
 from __future__ import annotations
 
@@ -121,8 +121,9 @@ class BaseInferenceService:
             stream=stream,
             metadata={
                 **(metadata or {}),
-                'provider': self._profile.provider,
-                'model_name': self._profile.base_model,
+                'provider': self._profile.provider_type,
+                'model_name': self._profile.provider_config.deployment_name or self._profile.model_name,
+                'api_base': self._profile.provider_config.api_base or '',
             },
         )
         response: InferenceResponse = await self._provider.complete(provider_request)
