@@ -63,6 +63,31 @@ class ServiceUnavailableError(GatewayError):
     code = 'SERVICE_UNAVAILABLE'
 
 
+# `AppException` is the name used throughout the per-capability inference
+# subsystem (registry/model_registry.py, services/planner.py, ...); it is an
+# alias rather than a parallel hierarchy so both names share one set of
+# FastAPI exception handlers.
+AppException = GatewayError
+
+
+class MissingProviderApiKey(GatewayError):
+    status_code = 500
+    code = 'MISSING_PROVIDER_API_KEY'
+
+
+class MissingProviderEndpoint(GatewayError):
+    status_code = 500
+    code = 'MISSING_PROVIDER_ENDPOINT'
+
+
+class PlannerResponseError(UpstreamServerError):
+    code = 'PLANNER_RESPONSE_ERROR'
+
+
+class InvalidProviderConfiguration(UpstreamServerError):
+    code = 'INVALID_PROVIDER_CONFIGURATION'
+
+
 def _build_error_response(request: Request, exc: GatewayError) -> ErrorResponse:
     return ErrorResponse(
         code=exc.code,

@@ -26,6 +26,13 @@ async def lifespan(app: FastAPI):
     configure_logging(settings)
     configure_telemetry(settings.app_name)
 
+    registered_routes = sorted(
+        f'{",".join(sorted(route.methods))} {route.path}'
+        for route in app.routes
+        if hasattr(route, 'path') and hasattr(route, 'methods') and route.methods
+    )
+    logger.info('startup_registered_routes count=%s routes=%s', len(registered_routes), registered_routes)
+
     app.state.ready = False
     readiness = await get_litellm_service().check_connectivity()
     app.state.ready = readiness.healthy
